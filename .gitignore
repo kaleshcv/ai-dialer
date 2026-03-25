@@ -1,0 +1,6 @@
+.env
+apps/web/node_modules/
+apps/web/dist/
+apps/web/package-lock.json
+**/__pycache__/
+*.pyc
