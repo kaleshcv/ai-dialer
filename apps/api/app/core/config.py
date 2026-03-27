@@ -59,14 +59,12 @@ class Settings(BaseSettings):
     HOST_POSTGRES_PORT: int = 5432
     DOCKER_POSTGRES_HOST: str = 'postgres'
     DOCKER_POSTGRES_PORT: int = 5432
-    REDIS_URL: str = 'redis://redis:6379/0'
     JWT_SECRET: str = 'change-me'
     JWT_ALG: str = 'HS256'
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
     API_HOST: str = '0.0.0.0'
     API_PORT: int = 8000
     API_CORS_ORIGINS: str = 'http://localhost:3000,http://127.0.0.1:3000'
-    ARI_CONTROLLER_URL: str = 'http://ari-controller:8090'
     ALLOW_BOOTSTRAP: bool = True
     METRICS_WINDOW_MINUTES: int = 60
     METRICS_STREAM_INTERVAL_SECONDS: int = 2

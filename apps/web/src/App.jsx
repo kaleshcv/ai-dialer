@@ -43,14 +43,6 @@ const defaultSignupForm = {
   password: '',
 }
 
-const defaultLaunchForm = {
-  campaignId: '',
-  fullName: 'Demo Lead',
-  phoneNumber: '',
-  timezone: 'Asia/Kolkata',
-  callerId: '',
-}
-
 const defaultCampaignForm = {
   name: '',
   dialingMode: 'predictive',
@@ -60,6 +52,13 @@ const defaultCampaignForm = {
 }
 
 const viewDefinitions = {
+  homePage: {
+    module: 'home',
+    title: 'Home Page',
+    breadcrumb: ['Home Page'],
+    description: 'Choose the workspace you want to enter from this top-level home screen.',
+    searchPlaceholder: 'Search workspaces',
+  },
   overview: {
     module: 'home',
     title: 'System Administrator',
@@ -71,52 +70,67 @@ const viewDefinitions = {
     module: 'call',
     title: 'Dialer Console',
     breadcrumb: ['Home Page', 'System Administrator', 'Call', 'Dialer Console'],
-    description: 'Use the browser SIP.js panel for live microphone calls and review recent call feedback below.',
-    searchPlaceholder: 'Search recent calls or numbers',
+    description: 'Use the browser SIP.js panel for live microphone calls from this tab.',
+    searchPlaceholder: 'Search browser voice settings',
   },
   campaigns: {
     module: 'call',
     title: 'Campaigns',
     breadcrumb: ['Home Page', 'System Administrator', 'Call', 'Campaigns'],
-    description: 'Create and manage campaigns in this module. You can control settings, caller ID, and dialing status here.',
+    description: 'Create and manage campaigns in this module. You can control settings, caller ID, and lifecycle here.',
     searchPlaceholder: 'Search campaigns',
   },
   activity: {
     module: 'call',
     title: 'Activity',
     breadcrumb: ['Home Page', 'System Administrator', 'Call', 'Activity'],
-    description: 'Review recent call attempts and live operational movement without leaving the main workspace.',
-    searchPlaceholder: 'Search calls or channels',
+    description: 'Review the live operational pulse and queue movement without leaving the main workspace.',
+    searchPlaceholder: 'Search metrics or queue data',
   },
   readiness: {
     module: 'settings',
     title: 'Workspace Settings',
     breadcrumb: ['Home Page', 'System Administrator', 'Workspace'],
-    description: 'Keep account status, telephony prerequisites, and deployment readiness checks in one place.',
+    description: 'Keep account status, voice prerequisites, and deployment readiness checks in one place.',
     searchPlaceholder: 'Search settings or readiness',
   },
 }
 
+const breadcrumbTargets = {
+  'Home Page': 'homePage',
+  'System Administrator': 'overview',
+  Call: 'dialer',
+  Workspace: 'readiness',
+  'Dialer Console': 'dialer',
+  Campaigns: 'campaigns',
+  Activity: 'activity',
+}
+
 const moduleDefinitions = {
   home: {
-    title: 'System Administrator',
-    description: 'Move between the major operational categories from this left-side module pane.',
+    title: 'Home Page',
+    description: 'Enter the administration workspace from this top-level launch area.',
     items: [
       {
+        id: 'homePage',
+        label: 'Home Page',
+        description: 'Return to the main landing screen for the workspace.',
+      },
+      {
         id: 'overview',
-        label: 'Overview',
-        description: 'Main category home for operations and administration.',
+        label: 'System Administrator',
+        description: 'Operational dashboard for calls, campaigns, activity, and workspace settings.',
       },
     ],
   },
   call: {
     title: 'Call',
-    description: 'You can perform operations related to call activity, campaign configuration, and browser SIP calling from this module.',
+    description: 'You can perform browser SIP calling and campaign configuration from this module.',
     items: [
       {
         id: 'dialer',
         label: 'Dialer Console',
-        description: 'Browser voice and recent call workflow.',
+        description: 'Browser voice and SIP registration.',
       },
       {
         id: 'campaigns',
@@ -126,18 +140,18 @@ const moduleDefinitions = {
       {
         id: 'activity',
         label: 'Activity',
-        description: 'Recent attempts, live queue movement, and trend tracking.',
+        description: 'Live queue movement and trend tracking.',
       },
     ],
   },
   settings: {
     title: 'Workspace',
-    description: 'Account, readiness, and system-facing deployment checks.',
+    description: 'Account, readiness, and external voice deployment checks.',
     items: [
       {
         id: 'readiness',
         label: 'Readiness',
-        description: 'Session details, telephony prerequisites, and environment checks.',
+        description: 'Session details, voice prerequisites, and environment checks.',
       },
     ],
   },
@@ -147,7 +161,7 @@ const overviewCards = [
   {
     id: 'dialer',
     label: 'Call Console',
-    description: 'Launch supervised outbound calls and keep the softphone-style center workspace focused on calling.',
+    description: 'Open the browser softphone and place live calls from the tab.',
     accent: 'teal',
   },
   {
@@ -159,7 +173,7 @@ const overviewCards = [
   {
     id: 'activity',
     label: 'Activity',
-    description: 'Monitor the recent outbound feed, channel IDs, and the metrics-driven trend line.',
+    description: 'Monitor live queue movement and the metrics-driven trend line.',
     accent: 'navy',
   },
   {
@@ -174,22 +188,17 @@ const prerequisiteChecklist = [
   {
     title: 'Provision a real SIP trunk',
     detail:
-      'Configure the trunk on your external Asterisk server, then make sure SIP_TRUNK_ENDPOINT in .env points at that working outbound endpoint.',
-  },
-  {
-    title: 'Keep ARI configuration aligned',
-    detail:
-      'ARI_BASE_URL, ARI_WS_URL, ARI_USERNAME, ARI_PASSWORD, and ARI_APP_NAME in .env must match the external Asterisk ARI configuration so the worker can originate cleanly.',
-  },
-  {
-    title: 'Use campaign context for outbound tests',
-    detail:
-      'Manual calls attach the destination to a selected campaign so the API can create a lead, log a call attempt, and show the attempt in activity.',
+      'Configure the trunk on your external Asterisk server so calls from the browser can reach their destination.',
   },
   {
     title: 'Register the browser SIP endpoint',
     detail:
-      'Use the SIP.js panel with VITE_SIP_URI, VITE_SIP_PASSWORD, and VITE_SIP_WS_URL from .env so the browser can register directly over your external Asterisk WebSocket transport and place live calls.',
+      'Use VITE_SIP_URI, VITE_SIP_PASSWORD, and VITE_SIP_WS_URL so SIP.js can register the browser directly against your external Asterisk WebSocket.',
+  },
+  {
+    title: 'Open the browser media path',
+    detail:
+      'Set the browser endpoint for WebRTC, keep direct_media off, and allow the RTP UDP range so Asterisk can pass audio both ways.',
   },
 ]
 
@@ -741,36 +750,7 @@ function OverviewWorkspace({ snapshot, onNavigate, searchQuery }) {
   )
 }
 
-function DialerWorkspace({
-  campaigns,
-  launchForm,
-  launchState,
-  onAppendDigit,
-  onBackspace,
-  onClearDigits,
-  onLaunchCampaignChange,
-  onLaunchChange,
-  onLaunchSubmit,
-  recentCalls,
-  searchQuery,
-  telephonyStatus,
-}) {
-  const loweredSearch = searchQuery.trim().toLowerCase()
-  const visibleCalls = recentCalls.filter((call) => {
-    if (!loweredSearch) {
-      return true
-    }
-    return `${call.lead_name} ${call.phone_number} ${call.campaign_name} ${call.status} ${call.hangup_cause || ''}`
-      .toLowerCase()
-      .includes(loweredSearch)
-  })
-  const ariBridgeState = telephonyStatus?.websocket?.state || telephonyStatus?.status || 'unknown'
-  const ariBridgeMessage =
-    telephonyStatus?.message ||
-    telephonyStatus?.websocket?.last_error ||
-    telephonyStatus?.websocket?.last_close_message ||
-    'Waiting for ARI controller status.'
-
+function DialerWorkspace() {
   return (
     <div className="workspace-stack">
       <section className="workspace-card">
@@ -786,42 +766,6 @@ function DialerWorkspace({
         </div>
 
         <BrowserVoicePanel defaultDestination="" />
-      </section>
-
-      <section className="workspace-card">
-        <div className="workspace-card__header">
-          <div>
-            <p className="workspace-card__eyebrow">Recent Calls</p>
-            <h3 className="workspace-card__title">Recent call feedback</h3>
-          </div>
-        </div>
-
-        <div className="feed-list">
-          {visibleCalls.length === 0 ? (
-            <div className="empty-state">No recent calls matched the current search.</div>
-          ) : (
-            visibleCalls.map((call) => (
-              <article key={call.id} className="feed-card">
-                <div className="feed-card__header">
-                  <div>
-                    <p className="feed-card__title">{call.lead_name}</p>
-                    <p className="feed-card__meta">
-                      {call.phone_number} · {call.campaign_name}
-                    </p>
-                  </div>
-                  <StatusPill label={normalizeStatus(call.status)} tone={getCallTone(call.status)} />
-                </div>
-                <div className="feed-card__stats">
-                  <span>Created {formatDateTime(call.created_at)}</span>
-                  <span>Channel {call.external_call_id || 'Pending'}</span>
-                  {call.status === 'failed' && call.hangup_cause ? (
-                    <span className="feed-card__failure">Failure {call.hangup_cause}</span>
-                  ) : null}
-                </div>
-              </article>
-            ))
-          )}
-        </div>
       </section>
     </div>
   )
@@ -985,17 +929,7 @@ function CampaignsWorkspace({
   )
 }
 
-function ActivityWorkspace({ connectionState, recentCalls, searchQuery, series, snapshot }) {
-  const loweredSearch = searchQuery.trim().toLowerCase()
-  const visibleCalls = recentCalls.filter((call) => {
-    if (!loweredSearch) {
-      return true
-    }
-    return `${call.lead_name} ${call.phone_number} ${call.campaign_name} ${call.status} ${call.external_call_id || ''} ${call.hangup_cause || ''}`
-      .toLowerCase()
-      .includes(loweredSearch)
-  })
-
+function ActivityWorkspace({ connectionState, series, snapshot }) {
   return (
     <div className="workspace-stack">
       <section className="workspace-card">
@@ -1036,48 +970,11 @@ function ActivityWorkspace({ connectionState, recentCalls, searchQuery, series, 
           </ResponsiveContainer>
         </div>
       </section>
-
-      <section className="workspace-card">
-        <div className="workspace-card__header">
-          <div>
-            <p className="workspace-card__eyebrow">Activity Feed</p>
-            <h3 className="workspace-card__title">Recent outbound attempts</h3>
-          </div>
-        </div>
-
-        <div className="feed-list">
-          {visibleCalls.length === 0 ? (
-            <div className="empty-state">No calls matched the current search.</div>
-          ) : (
-            visibleCalls.map((call) => (
-              <article key={call.id} className="feed-card">
-                <div className="feed-card__header">
-                  <div>
-                    <p className="feed-card__title">{call.lead_name}</p>
-                    <p className="feed-card__meta">
-                      {call.phone_number} · {call.campaign_name}
-                    </p>
-                  </div>
-                  <StatusPill label={normalizeStatus(call.status)} tone={getCallTone(call.status)} />
-                </div>
-                <div className="feed-card__stats">
-                  <span>Created {formatDateTime(call.created_at)}</span>
-                  <span>Started {call.started_at ? formatClock(call.started_at) : 'Waiting'}</span>
-                  <span>Channel {call.external_call_id || 'Pending'}</span>
-                  {call.status === 'failed' && call.hangup_cause ? (
-                    <span className="feed-card__failure">Failure {call.hangup_cause}</span>
-                  ) : null}
-                </div>
-              </article>
-            ))
-          )}
-        </div>
-      </section>
     </div>
   )
 }
 
-function ReadinessWorkspace({ connectionState, searchQuery, telephonyStatus, user }) {
+function ReadinessWorkspace({ connectionState, searchQuery, user }) {
   const loweredSearch = searchQuery.trim().toLowerCase()
   const visibleChecks = prerequisiteChecklist.filter((item) => {
     if (!loweredSearch) {
@@ -1087,12 +984,6 @@ function ReadinessWorkspace({ connectionState, searchQuery, telephonyStatus, use
   })
   const browserVoiceConfig = getBrowserVoiceConfig()
   const browserVoiceReady = isBrowserVoiceConfigured(browserVoiceConfig)
-  const ariBridgeState = telephonyStatus?.websocket?.state || telephonyStatus?.status || 'unknown'
-  const ariBridgeMessage =
-    telephonyStatus?.message ||
-    telephonyStatus?.websocket?.last_error ||
-    telephonyStatus?.websocket?.last_close_message ||
-    'Waiting for ARI controller status.'
 
   return (
     <div className="workspace-stack">
@@ -1108,12 +999,6 @@ function ReadinessWorkspace({ connectionState, searchQuery, telephonyStatus, use
           <MetricCard label="Session" value={user?.full_name || 'Guest'} detail={user?.email || 'No authenticated session'} tone="navy" />
           <MetricCard label="Role" value={user?.role || 'Guest'} detail={`Tenant ${user?.tenant_id || '-'}`} tone="slate" />
           <MetricCard label="Metrics feed" value={normalizeStatus(connectionState)} detail="Live websocket connection state." tone={getConnectionTone(connectionState)} />
-          <MetricCard
-            label="Backend ARI bridge"
-            value={normalizeStatus(ariBridgeState)}
-            detail={ariBridgeMessage}
-            tone={getTelephonyTone(telephonyStatus?.status)}
-          />
           <MetricCard
             label="Voice layer"
             value={browserVoiceReady ? 'Ready' : 'Pending'}
@@ -1147,6 +1032,97 @@ function ReadinessWorkspace({ connectionState, searchQuery, telephonyStatus, use
   )
 }
 
+function BreadcrumbTrail({ items, currentViewId, onNavigate }) {
+  return (
+    <nav className="breadcrumb-trail" aria-label="Breadcrumb">
+      <ol className="breadcrumb-trail__list">
+        {items.map((label, index) => {
+          const targetView = breadcrumbTargets[label]
+          const isCurrent = index === items.length - 1
+
+          return (
+            <li key={`${label}-${index}`} className="breadcrumb-trail__item">
+              {targetView ? (
+                <button
+                  type="button"
+                  className={cx('breadcrumb-trail__button', isCurrent && 'breadcrumb-trail__button--current')}
+                  onClick={() => onNavigate(targetView)}
+                  aria-current={isCurrent ? 'page' : undefined}
+                >
+                  {label}
+                </button>
+              ) : (
+                <span className="breadcrumb-trail__current" aria-current={isCurrent ? 'page' : undefined}>
+                  {label}
+                </span>
+              )}
+
+              {index < items.length - 1 ? <span className="breadcrumb-trail__separator">›</span> : null}
+            </li>
+          )
+        })}
+      </ol>
+    </nav>
+  )
+}
+
+function HomePageWorkspace({ onNavigate, searchQuery }) {
+  const quickEntries = [
+    {
+      id: 'overview',
+      label: 'System Administrator',
+      description: 'Open the main operations workspace for dialer, campaigns, activity, and readiness.',
+      accent: 'navy',
+      icon: 'workspace',
+    },
+    {
+      id: 'dialer',
+      label: 'Call Console',
+      description: 'Jump straight into the browser softphone and calling tools.',
+      accent: 'teal',
+      icon: 'phone',
+    },
+  ]
+
+  const loweredSearch = searchQuery.trim().toLowerCase()
+  const entries = quickEntries.filter((entry) => {
+    if (!loweredSearch) {
+      return true
+    }
+    return `${entry.label} ${entry.description}`.toLowerCase().includes(loweredSearch)
+  })
+
+  return (
+    <div className="workspace-stack">
+      <section className="workspace-card">
+        <div className="workspace-card__header">
+          <div>
+            <p className="workspace-card__eyebrow">Launch Pad</p>
+            <h3 className="workspace-card__title">Choose your workspace</h3>
+            <p className="workspace-card__description">
+              Home Page is now a real top-level destination, so the breadcrumb can take you back here from the admin screens.
+            </p>
+          </div>
+        </div>
+
+        <div className="overview-grid">
+          {entries.map((entry) => (
+            <button key={entry.id} type="button" className="overview-card" onClick={() => onNavigate(entry.id)}>
+              <div className={cx('overview-card__badge', `overview-card__badge--${entry.accent}`)}>
+                <AppIcon name={entry.icon} />
+              </div>
+              <div>
+                <p className="overview-card__title">{entry.label}</p>
+                <p className="overview-card__description">{entry.description}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
+    </div>
+  )
+}
+
 export default function App() {
   const storedSession = readStoredSession()
   const [now, setNow] = useState(new Date())
@@ -1156,16 +1132,12 @@ export default function App() {
   const [signupForm, setSignupForm] = useState(defaultSignupForm)
   const [token, setToken] = useState(storedSession?.token || '')
   const [user, setUser] = useState(storedSession?.user || null)
-  const [activeView, setActiveView] = useState('overview')
+  const [activeView, setActiveView] = useState('homePage')
   const [searchQuery, setSearchQuery] = useState('')
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [metrics, setMetrics] = useState([])
   const [campaigns, setCampaigns] = useState([])
-  const [recentCalls, setRecentCalls] = useState([])
   const [connectionState, setConnectionState] = useState('connecting')
-  const [telephonyStatus, setTelephonyStatus] = useState(null)
-  const [launchForm, setLaunchForm] = useState(defaultLaunchForm)
-  const [launchState, setLaunchState] = useState({ status: 'idle', message: '' })
   const [showCampaignForm, setShowCampaignForm] = useState(false)
   const [campaignForm, setCampaignForm] = useState(defaultCampaignForm)
   const [campaignState, setCampaignState] = useState({ status: 'idle', message: '' })
@@ -1252,71 +1224,20 @@ export default function App() {
     }
   }
 
-  async function loadRecentCalls(tenantId = user?.tenant_id, activeToken = token) {
-    if (!activeToken || !tenantId) {
-      setRecentCalls([])
-      return
-    }
-
-    try {
-      const response = await fetch(buildApiUrl('/api/v1/supervisor/calls', { limit: 8, tenant_id: tenantId }), {
-        headers: buildHeaders(activeToken),
-      })
-      if (!response.ok) {
-        return
-      }
-
-      const payload = await response.json()
-      startTransition(() => {
-        setRecentCalls(payload)
-      })
-    } catch (error) {
-      console.error('Failed to load recent calls', error)
-    }
-  }
-
-  async function refreshAll(tenantId = user?.tenant_id, activeToken = token) {
-    await Promise.all([loadCampaigns(tenantId, activeToken), loadRecentCalls(tenantId, activeToken)])
-  }
-
   useEffect(() => {
     if (!isAuthenticated) {
       setCampaigns([])
-      setRecentCalls([])
       setMetrics([])
       setConnectionState('connecting')
-      setTelephonyStatus(null)
       return
     }
 
-    refreshAll(user.tenant_id, token)
     const campaignIntervalId = window.setInterval(() => loadCampaigns(user.tenant_id, token), 12000)
-    const callIntervalId = window.setInterval(() => loadRecentCalls(user.tenant_id, token), 6000)
 
     return () => {
       window.clearInterval(campaignIntervalId)
-      window.clearInterval(callIntervalId)
     }
   }, [isAuthenticated, token, user?.tenant_id])
-
-  useEffect(() => {
-    if (!campaigns.length) {
-      return
-    }
-
-    setLaunchForm((current) => {
-      if (current.campaignId && campaigns.some((campaign) => String(campaign.id) === current.campaignId)) {
-        return current
-      }
-
-      const firstCampaign = campaigns[0]
-      return {
-        ...current,
-        campaignId: String(firstCampaign.id),
-        callerId: firstCampaign.caller_id,
-      }
-    })
-  }, [campaigns])
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -1419,66 +1340,6 @@ export default function App() {
     }
   }, [isAuthenticated, token])
 
-  useEffect(() => {
-    if (!isAuthenticated) {
-      setTelephonyStatus(null)
-      return
-    }
-
-    let cancelled = false
-    let statusIntervalId = null
-
-    async function loadTelephonyStatus() {
-      try {
-        const response = await fetch(buildApiUrl('/api/v1/supervisor/telephony-status'), {
-          headers: buildHeaders(token),
-        })
-        if (!response.ok) {
-          if (!cancelled) {
-            startTransition(() => {
-              setTelephonyStatus({
-                status: 'offline',
-                service: 'ari-controller',
-                message: `ARI controller health check failed (${response.status} ${response.statusText}).`,
-                ari_controller_url: null,
-                websocket: null,
-              })
-            })
-          }
-          return
-        }
-
-        const payload = await response.json()
-        if (!cancelled) {
-          startTransition(() => {
-            setTelephonyStatus(payload)
-          })
-        }
-      } catch (error) {
-        console.error('Failed to load telephony status', error)
-        if (!cancelled) {
-          startTransition(() => {
-            setTelephonyStatus({
-              status: 'offline',
-              service: 'ari-controller',
-              message: error instanceof Error ? error.message : 'ARI controller status unavailable.',
-              ari_controller_url: null,
-              websocket: null,
-            })
-          })
-        }
-      }
-    }
-
-    loadTelephonyStatus()
-    statusIntervalId = window.setInterval(loadTelephonyStatus, 15000)
-
-    return () => {
-      cancelled = true
-      window.clearInterval(statusIntervalId)
-    }
-  }, [isAuthenticated, token])
-
   function onLoginChange(field, value) {
     setLoginForm((current) => ({ ...current, [field]: value }))
   }
@@ -1510,7 +1371,7 @@ export default function App() {
         status: 'success',
         message: `Welcome back, ${payload.user.full_name}.`,
       })
-      navigateTo('overview')
+      navigateTo('homePage')
     } catch (error) {
       console.error('Login failed', error)
       setAuthState({
@@ -1549,7 +1410,7 @@ export default function App() {
         status: 'success',
         message: `Workspace created for ${payload.user.email}.`,
       })
-      navigateTo('overview')
+      navigateTo('homePage')
     } catch (error) {
       console.error('Signup failed', error)
       setAuthState({
@@ -1582,102 +1443,12 @@ export default function App() {
     setToken('')
     setUser(null)
     setSearchQuery('')
-    setActiveView('overview')
+    setActiveView('homePage')
     setAuthMode('login')
     setAuthState({
       status: 'success',
       message: 'Logged out successfully.',
     })
-  }
-
-  function onLaunchChange(field, value) {
-    setLaunchForm((current) => ({ ...current, [field]: value }))
-  }
-
-  function onLaunchCampaignChange(value) {
-    const selectedCampaign = campaigns.find((campaign) => String(campaign.id) === value)
-    setLaunchForm((current) => ({
-      ...current,
-      campaignId: value,
-      callerId: selectedCampaign?.caller_id || current.callerId,
-    }))
-  }
-
-  function onAppendDigit(digit) {
-    setLaunchForm((current) => ({
-      ...current,
-      phoneNumber: `${current.phoneNumber}${digit}`,
-    }))
-  }
-
-  function onBackspace() {
-    setLaunchForm((current) => ({
-      ...current,
-      phoneNumber: current.phoneNumber.slice(0, -1),
-    }))
-  }
-
-  function onClearDigits() {
-    setLaunchForm((current) => ({
-      ...current,
-      phoneNumber: '',
-    }))
-  }
-
-  async function onLaunchSubmit() {
-    if (!launchForm.campaignId) {
-      setLaunchState({
-        status: 'error',
-        message: 'Select a campaign before queuing a call.',
-      })
-      return
-    }
-
-    if (!launchForm.phoneNumber) {
-      setLaunchState({
-        status: 'error',
-        message: 'Enter a destination number before launching the call.',
-      })
-      return
-    }
-
-    setLaunchState({ status: 'submitting', message: '' })
-
-    try {
-      const response = await fetch(buildApiUrl('/api/v1/supervisor/manual-call'), {
-        method: 'POST',
-        headers: buildHeaders(token, true),
-        body: JSON.stringify({
-          campaign_id: Number(launchForm.campaignId),
-          full_name: launchForm.fullName,
-          phone_number: launchForm.phoneNumber,
-          timezone: launchForm.timezone,
-          caller_id: launchForm.callerId || null,
-        }),
-      })
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null)
-        throw new Error(payload?.detail || 'Manual call request failed')
-      }
-
-      const payload = await response.json()
-      setLaunchState({
-        status: 'success',
-        message: `Queued ${payload.full_name} on ${payload.campaign_name}.`,
-      })
-      setLaunchForm((current) => ({
-        ...current,
-        fullName: 'Demo Lead',
-        phoneNumber: '',
-      }))
-      await loadRecentCalls(user?.tenant_id, token)
-    } catch (error) {
-      console.error('Manual call failed', error)
-      setLaunchState({
-        status: 'error',
-        message: error instanceof Error ? error.message : 'Unable to queue call.',
-      })
-    }
   }
 
   async function onCampaignControl(campaignId, action) {
@@ -1686,7 +1457,7 @@ export default function App() {
         method: 'POST',
         headers: buildHeaders(token),
       })
-      await refreshAll(user?.tenant_id, token)
+      await loadCampaigns(user?.tenant_id, token)
     } catch (error) {
       console.error(`Failed to ${action} campaign`, error)
     }
@@ -1758,7 +1529,7 @@ export default function App() {
         <div className="icon-rail__brand">DC</div>
 
         <div className="icon-rail__main">
-          <RailButton active={currentView.module === 'home'} icon="home" label="Home" onClick={() => navigateTo('overview')} />
+          <RailButton active={currentView.module === 'home'} icon="home" label="Home" onClick={() => navigateTo('homePage')} />
           <RailButton active={currentView.module === 'call'} icon="phone" label="Call" onClick={() => navigateTo('dialer')} />
         </div>
 
@@ -1819,7 +1590,7 @@ export default function App() {
       <main className="content-pane">
         <header className="content-header">
           <div>
-            <p className="content-header__eyebrow">{currentView.breadcrumb.join(' > ')}</p>
+            <BreadcrumbTrail items={currentView.breadcrumb} currentViewId={activeView} onNavigate={navigateTo} />
             <h1 className="content-header__title">{currentView.title}</h1>
             <p className="content-header__description">{currentView.description}</p>
           </div>
@@ -1827,25 +1598,16 @@ export default function App() {
           <HeaderSearch placeholder={currentView.searchPlaceholder} value={searchQuery} onChange={setSearchQuery} />
         </header>
 
+        {activeView === 'homePage' ? (
+          <HomePageWorkspace onNavigate={navigateTo} searchQuery={searchQuery} />
+        ) : null}
+
         {activeView === 'overview' ? (
           <OverviewWorkspace snapshot={snapshot} onNavigate={navigateTo} searchQuery={searchQuery} />
         ) : null}
 
         {activeView === 'dialer' ? (
-          <DialerWorkspace
-            campaigns={campaigns}
-            launchForm={launchForm}
-            launchState={launchState}
-            onAppendDigit={onAppendDigit}
-            onBackspace={onBackspace}
-            onClearDigits={onClearDigits}
-            onLaunchCampaignChange={onLaunchCampaignChange}
-            onLaunchChange={onLaunchChange}
-            onLaunchSubmit={onLaunchSubmit}
-            recentCalls={recentCalls}
-            searchQuery={searchQuery}
-            telephonyStatus={telephonyStatus}
-          />
+          <DialerWorkspace />
         ) : null}
 
         {activeView === 'campaigns' ? (
@@ -1866,8 +1628,6 @@ export default function App() {
         {activeView === 'activity' ? (
           <ActivityWorkspace
             connectionState={connectionState}
-            recentCalls={recentCalls}
-            searchQuery={searchQuery}
             series={series}
             snapshot={snapshot}
           />
@@ -1877,7 +1637,6 @@ export default function App() {
           <ReadinessWorkspace
             connectionState={connectionState}
             searchQuery={searchQuery}
-            telephonyStatus={telephonyStatus}
             user={user}
           />
         ) : null}

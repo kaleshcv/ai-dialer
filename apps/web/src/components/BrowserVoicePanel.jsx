@@ -66,18 +66,45 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
   const [destination, setDestination] = useState(normalizeBrowserDialNumber(defaultDestination))
   const [status, setStatus] = useState('idle')
   const [isRegistered, setIsRegistered] = useState(false)
+  const [audioState, setAudioState] = useState('idle')
   const [message, setMessage] = useState('Browser SIP.js softphone is ready to connect.')
 
-  async function ensureRemoteAudioIsPlaying() {
+  function prepareAudioElement() {
     const audioElement = audioRef.current
     if (!audioElement) {
-      return
+      return null
     }
 
     audioElement.muted = false
     audioElement.volume = 1
+    audioElement.autoplay = true
+    audioElement.playsInline = true
 
-    await audioElement.play()
+    return audioElement
+  }
+
+  async function primeAudioOutput({ reportBlocked = false } = {}) {
+    const audioElement = prepareAudioElement()
+    if (!audioElement) {
+      return false
+    }
+
+    try {
+      await audioElement.play()
+      if (audioElement.srcObject) {
+        setAudioState('playing')
+      }
+      return true
+    } catch (error) {
+      if (reportBlocked) {
+        setAudioState('blocked')
+      }
+      throw error
+    }
+  }
+
+  async function ensureRemoteAudioIsPlaying() {
+    return primeAudioOutput({ reportBlocked: true })
   }
 
   useEffect(() => {
@@ -158,7 +185,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
 
               setStatus('error')
               setMessage(
-                `Call answered, but browser audio could not start: ${formatError(error)}. Check speaker permissions and autoplay settings.`,
+                `Call answered, but browser audio could not start: ${formatError(error)}. Click Enable audio or check speaker permissions.`,
               )
             })
         },
@@ -250,6 +277,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
       if (!simpleUser.isConnected()) {
         await simpleUser.connect()
       }
+      void primeAudioOutput({ reportBlocked: false }).catch(() => {})
       setStatus(isRegisteredRef.current ? 'ready' : 'connected')
       setMessage('Transport connected. You can register or place a call.')
     } catch (error) {
@@ -272,6 +300,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
         setMessage('Connecting to the SIP WebSocket transport...')
         await simpleUser.connect()
       }
+      void primeAudioOutput({ reportBlocked: false }).catch(() => {})
 
       setStatus('registering')
       setMessage('Sending REGISTER for the browser endpoint...')
@@ -304,6 +333,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
         setMessage('Connecting to the SIP WebSocket transport...')
         await simpleUser.connect()
       }
+      void primeAudioOutput({ reportBlocked: false }).catch(() => {})
 
       setStatus('dialing')
       setMessage(`Dialing ${target} through Asterisk...`)
@@ -323,6 +353,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     try {
       setMessage('Ending the active browser call...')
       await simpleUser.hangup()
+      setAudioState('idle')
     } catch (error) {
       setStatus('error')
       setMessage(`Could not hang up the browser call: ${formatError(error)}`)
@@ -345,6 +376,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
       if (mountedRef.current) {
         isRegisteredRef.current = false
         setIsRegistered(false)
+        setAudioState('idle')
         setStatus('idle')
         setMessage('Browser endpoint disconnected.')
       }
@@ -398,6 +430,18 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
           <button type="button" className="secondary-button" onClick={handleRegister}>
             Register
           </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() =>
+              primeAudioOutput({ reportBlocked: true }).catch((error) => {
+                setStatus('error')
+                setMessage(`Audio output is blocked: ${formatError(error)}. Try clicking Enable audio during a call.`)
+              })
+            }
+          >
+            Enable audio
+          </button>
           <button type="button" className="primary-button" onClick={handleCall} disabled={!browserTarget || !configured}>
             Call from browser
           </button>
@@ -435,9 +479,22 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
             <span>Configured</span>
             <strong>{configured ? 'Yes' : 'No'}</strong>
           </div>
+          <div className="browser-voice-panel__summary-row">
+            <span>Speaker</span>
+            <strong>{audioState === 'playing' ? 'Playing' : audioState === 'blocked' ? 'Needs unlock' : 'Idle'}</strong>
+          </div>
         </div>
 
-        <audio ref={audioRef} autoPlay playsInline className="browser-voice-panel__audio" />
+        <audio
+          ref={audioRef}
+          autoPlay
+          playsInline
+          controls
+          className="browser-voice-panel__audio"
+          onPlaying={() => setAudioState('playing')}
+          onPause={() => setAudioState('idle')}
+          onError={() => setAudioState('blocked')}
+        />
       </div>
     </div>
   )
