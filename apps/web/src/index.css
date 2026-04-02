@@ -651,6 +651,13 @@ svg {
   padding: 6px 6px 0;
 }
 
+.content-header__tools {
+  display: grid;
+  gap: 14px;
+  justify-items: end;
+  align-items: start;
+}
+
 .breadcrumb-trail {
   margin: 0;
 }
@@ -1101,19 +1108,19 @@ svg {
 }
 
 .browser-voice-panel {
-  position: relative;
-  margin-top: 18px;
-  padding: 22px;
-  border-radius: 24px;
+  margin-top: 9px;
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.75fr);
-  gap: 18px;
-  background: linear-gradient(180deg, rgba(18, 61, 139, 0.08), rgba(255, 255, 255, 0.94));
-  border: 1px solid rgba(18, 61, 139, 0.08);
+  gap: 9px;
+  align-items: start;
 }
 
 .browser-voice-panel__main {
   min-width: 0;
+  padding: 22px;
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(18, 61, 139, 0.08), rgba(255, 255, 255, 0.94));
+  border: 1px solid rgba(18, 61, 139, 0.08);
 }
 
 .browser-voice-panel__header {
@@ -1201,6 +1208,65 @@ svg {
   flex-wrap: wrap;
 }
 
+.browser-voice-panel__accent-ai-inline {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+
+.browser-voice-panel__accent-ai-inline--sidebar {
+  justify-items: start;
+}
+
+.browser-voice-panel__accent-ai-inline-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.browser-voice-panel__accent-ai-inline--sidebar .browser-voice-panel__accent-ai-inline-header,
+.browser-voice-panel__accent-ai-inline--sidebar .browser-voice-panel__accent-ai-inline-controls {
+  justify-content: flex-start;
+}
+
+.browser-voice-panel__accent-ai-inline-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.browser-voice-panel__accent-ai-select {
+  min-width: 180px;
+  width: auto;
+}
+
+.browser-voice-panel__accent-ai-button {
+  white-space: nowrap;
+}
+
+.browser-voice-panel__monitor-audio {
+  display: none;
+}
+
+.browser-voice-panel__accent-ai-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.browser-voice-panel__accent-ai-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--navy);
+}
+
 .browser-voice-panel__message {
   margin: 16px 0 0;
   padding: 12px 14px;
@@ -1216,9 +1282,29 @@ svg {
 }
 
 .browser-voice-panel__aside {
+  margin-top: -150px;
   display: grid;
   gap: 14px;
   align-content: start;
+  padding: 0;
+  border-top-left-radius: 28px;
+  border-bottom-left-radius: 28px;
+  border-top-right-radius: 24px;
+  border-bottom-right-radius: 24px;
+  background: rgba(255, 255, 255, 0.88);
+  border-left: 1px solid rgba(18, 61, 139, 0.08);
+  border-top: 1px solid rgba(18, 61, 139, 0.08);
+  border-bottom: 1px solid rgba(18, 61, 139, 0.08);
+  box-shadow: inset 1px 0 0 rgba(18, 61, 139, 0.03);
+}
+
+.browser-voice-panel__accent-ai-card {
+  padding: 16px;
+  border-radius: 20px;
+  background: #ffffff;
+  border: 1px solid rgba(18, 61, 139, 0.08);
+  box-shadow: 0 14px 24px rgba(18, 61, 139, 0.06);
+  border-bottom: 1px solid rgba(18, 61, 139, 0.12);
 }
 
 .browser-voice-panel__summary {
@@ -1264,6 +1350,10 @@ svg {
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.88);
   box-shadow: inset 0 0 0 1px rgba(18, 61, 139, 0.08);
+}
+
+.browser-voice-panel__test-audio {
+  display: none;
 }
 
 .toolbar-actions,
@@ -1464,6 +1554,11 @@ svg {
   .browser-voice-panel {
     grid-template-columns: 1fr;
   }
+
+  .browser-voice-panel__main,
+  .browser-voice-panel__aside {
+    margin-top: 0;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1498,6 +1593,27 @@ svg {
   .toolbar-actions,
   .table-row__actions,
   .campaign-form__actions {
+    width: 100%;
+  }
+
+  .content-header__tools {
+    width: 100%;
+    justify-items: stretch;
+  }
+
+  .browser-voice-panel__accent-ai-inline,
+  .browser-voice-panel__accent-ai-inline-header {
+    justify-items: start;
+    justify-content: space-between;
+  }
+
+  .browser-voice-panel__accent-ai-inline-controls {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .browser-voice-panel__accent-ai-select,
+  .browser-voice-panel__accent-ai-button {
     width: 100%;
   }
 

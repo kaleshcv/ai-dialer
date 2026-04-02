@@ -753,20 +753,7 @@ function OverviewWorkspace({ snapshot, onNavigate, searchQuery }) {
 function DialerWorkspace() {
   return (
     <div className="workspace-stack">
-      <section className="workspace-card">
-        <div className="workspace-card__header">
-          <div>
-            <p className="workspace-card__eyebrow">Browser Voice</p>
-            <h3 className="workspace-card__title">SIP.js softphone</h3>
-            <p className="workspace-card__description">
-              Register the browser as a SIP endpoint, then place a live microphone call through your external Asterisk and the
-              outbound trunk.
-            </p>
-          </div>
-        </div>
-
-        <BrowserVoicePanel defaultDestination="" />
-      </section>
+      <BrowserVoicePanel defaultDestination="" />
     </div>
   )
 }
@@ -1595,7 +1582,11 @@ export default function App() {
             <p className="content-header__description">{currentView.description}</p>
           </div>
 
-          <HeaderSearch placeholder={currentView.searchPlaceholder} value={searchQuery} onChange={setSearchQuery} />
+          {activeView !== 'dialer' ? (
+            <div className="content-header__tools">
+              <HeaderSearch placeholder={currentView.searchPlaceholder} value={searchQuery} onChange={setSearchQuery} />
+            </div>
+          ) : null}
         </header>
 
         {activeView === 'homePage' ? (

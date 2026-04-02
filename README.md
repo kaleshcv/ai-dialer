@@ -1,15 +1,15 @@
 # Dialer Combined
 
-This repository contains two pieces that work together:
+This repository contains:
 
-- a FastAPI backend for auth, campaigns, leads, metrics, and database access
-- a browser SIP/WebRTC softphone that registers directly to your external Asterisk server from the tab
+- a FastAPI backend for auth, campaigns, leads, metrics, and AccentAI host control
+- a browser SIP/WebRTC softphone that registers directly to your external Asterisk server
 
 There is no ARI controller or worker-based originate path in the default runtime.
 
 ## Services
 
-- `api`: FastAPI control plane with auth, campaigns, leads, and metrics
+- `api`: FastAPI control plane plus AccentAI host-control APIs
 - `web`: Vite + React dashboard with the browser softphone
 - `postgres`: primary relational datastore
 - `migrate`: one-shot schema migration service
@@ -29,34 +29,72 @@ docker compose run --rm migrate
 
 ## Environment
 
-The backend still uses the usual database and auth settings in `.env`.
-The browser softphone uses only these values:
+The browser softphone uses:
 
 ```env
 VITE_SIP_URI=sip:1001@172.16.50.45
-VITE_SIP_PASSWORD=ecp!gen@20129
+VITE_SIP_PASSWORD=replace-me
 VITE_SIP_WS_URL=ws://172.16.50.45/ws
 VITE_SIP_DISPLAY_NAME=Softphone 1001
 ```
 
-If your Asterisk server exposes the built-in WebSocket directly, the URL is often `ws://172.16.50.45:8088/ws` instead.
+AccentAI host-control settings:
+
+```env
+ACCENTAI_DSP_ROOT=
+ACCENTAI_DSP_NODE_BIN=node
+ACCENTAI_DSP_SCRIPT=
+ACCENTAI_DSP_WASM=
+ACCENTAI_DSP_MODEL=
+ACCENTAI_HOST_OUTPUT_NAME=AccentAI_Output
+ACCENTAI_HOST_PID_FILE=
+ACCENTAI_HOST_LOG_FILE=
+ACCENTAI_HOST_START_SCRIPT=
+ACCENTAI_HOST_STOP_SCRIPT=
+ACCENTAI_HOST_SETUP_SCRIPT=
+```
+
+## AccentAI Linux Host Mode
+
+AccentAI now runs in Linux host-control mode.
+
+The intended flow is:
+
+1. The backend starts the local AccentAI host service.
+2. The host service captures the real system microphone.
+3. AccentAI converts that mic audio locally.
+4. Linux exposes the converted source back to the browser as an input device.
+5. The browser softphone uses that converted input device like a normal microphone when `Start AccentAI` is enabled.
+
+The repository includes these helper scripts:
+
+- `scripts/setup-accentai-linux-audio.sh`
+- `scripts/start-accentai-host.sh`
+- `scripts/stop-accentai-host.sh`
+
+The API expects the vendored AccentAI runtime here:
+
+- `third_party/AccentAI/src/index.js`
+- `third_party/AccentAI/assets/dsp.wasm`
+- `third_party/AccentAI/assets/accent.model`
+
+Important limitation:
+
+- the browser can only use AccentAI when the converted source is actually visible to the OS/browser as an `audioinput` device
+- this is a host-audio integration, not a pure browser-only transformation
 
 ## Backend API
 
-The backend keeps campaign and lead management in the database.
+Useful AccentAI endpoints:
 
-- Create the first admin with `POST /api/v1/auth/bootstrap`
-- Log in with `POST /api/v1/auth/login`
-- Create and list campaigns with `POST /api/v1/campaigns` and `GET /api/v1/campaigns`
-- Import leads with `POST /api/v1/leads/import`
-- Campaign `start`, `pause`, and `resume` now only update campaign state in the database
+- `GET /api/v1/accent-ai/info`
+- `POST /api/v1/accent-ai/start`
+- `POST /api/v1/accent-ai/stop`
+- `POST /api/v1/accent-ai/reset`
 
-API docs:
+Other backend API docs:
 
 - `http://localhost:8000/docs`
-
-Metrics:
-
 - `http://localhost:8000/metrics`
 - `ws://localhost:8000/ws/metrics`
 
@@ -65,20 +103,24 @@ Metrics:
 The dialer tab contains a SIP.js softphone that registers directly to Asterisk from the browser.
 
 1. Open `http://localhost:3000`
-2. Go to the `Dialer Console`
+2. Go to `Dialer Console`
 3. Click `Connect`
 4. Click `Register`
 5. Enter a destination number and place the call
 
-For successful browser audio:
+To use AccentAI:
 
-- The Asterisk browser endpoint should be configured for WebRTC
-- `direct_media=no` on that endpoint
-- RTP UDP ports must be open on the Asterisk server
-- The browser must have microphone and speaker permissions
+1. Make sure `third_party/AccentAI` is present
+2. Make sure the Linux host scripts can create the converted source
+3. Start the backend and web app
+4. Click `Start AccentAI`
+5. Place the browser call
+
+When AccentAI is stopped, the browser falls back to the normal system microphone.
 
 ## Notes
 
 - The repo no longer depends on an ARI bridge or worker queue.
 - The browser softphone talks directly to your external Asterisk server.
-- Campaigns remain in the backend as database-managed records.
+- Campaigns remain backend-managed records.
+- AccentAI control is now host-driven; the browser no longer needs to stream live conversion audio through the app for normal calling.

@@ -1,5 +1,6 @@
 import os
 import socket
+from pathlib import Path
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,6 +16,12 @@ def _running_in_docker() -> bool:
 
 def _default_host_postgres_host() -> str:
     return 'host.docker.internal' if _running_in_docker() else '127.0.0.1'
+
+
+def _default_accentai_dsp_root() -> Path:
+    if _running_in_docker():
+        return Path('/vendor/AccentAI')
+    return Path(__file__).resolve().parents[4] / 'third_party' / 'AccentAI'
 
 
 def _is_tcp_reachable(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -68,6 +75,19 @@ class Settings(BaseSettings):
     ALLOW_BOOTSTRAP: bool = True
     METRICS_WINDOW_MINUTES: int = 60
     METRICS_STREAM_INTERVAL_SECONDS: int = 2
+    ACCENTAI_DSP_ROOT: str = str(_default_accentai_dsp_root())
+    ACCENTAI_DSP_NODE_BIN: str = 'node'
+    ACCENTAI_DSP_SCRIPT: str = str(_default_accentai_dsp_root() / 'src' / 'index.js')
+    ACCENTAI_DSP_WASM: str = str(_default_accentai_dsp_root() / 'assets' / 'dsp.wasm')
+    ACCENTAI_DSP_MODEL: str = str(_default_accentai_dsp_root() / 'assets' / 'accent.model')
+    ACCENTAI_DSP_PACKET_SAMPLES: int = 1024
+    ACCENTAI_DSP_SAMPLE_RATE: int = 16000
+    ACCENTAI_HOST_OUTPUT_NAME: str = 'AccentAI_Output'
+    ACCENTAI_HOST_PID_FILE: str = str(Path(__file__).resolve().parents[4] / 'run' / 'accentai-host.pid')
+    ACCENTAI_HOST_LOG_FILE: str = str(Path(__file__).resolve().parents[4] / 'run' / 'accentai-host.log')
+    ACCENTAI_HOST_START_SCRIPT: str = str(Path(__file__).resolve().parents[4] / 'scripts' / 'start-accentai-host.sh')
+    ACCENTAI_HOST_STOP_SCRIPT: str = str(Path(__file__).resolve().parents[4] / 'scripts' / 'stop-accentai-host.sh')
+    ACCENTAI_HOST_SETUP_SCRIPT: str = str(Path(__file__).resolve().parents[4] / 'scripts' / 'setup-accentai-linux-audio.sh')
 
     @field_validator('DATABASE_MODE', mode='before')
     @classmethod
