@@ -503,9 +503,27 @@ class AccentAiManager:
         return {
             'dsp_root': Path(settings.ACCENTAI_DSP_ROOT),
             'dsp_script': Path(settings.ACCENTAI_DSP_SCRIPT),
+            'dsp_bundle': Path(settings.ACCENTAI_DSP_BUNDLE),
             'dsp_wasm': Path(settings.ACCENTAI_DSP_WASM),
             'dsp_model': Path(settings.ACCENTAI_DSP_MODEL),
         }
+
+    def _required_runtime_paths(self) -> list[Path]:
+        required_files = self._required_files()
+        runtime_paths = [
+            required_files['dsp_root'],
+            required_files['dsp_script'],
+        ]
+        bundle_path = required_files['dsp_bundle']
+        wasm_path = required_files['dsp_wasm']
+        model_path = required_files['dsp_model']
+        if bundle_path.exists() or (wasm_path.exists() and model_path.exists()):
+            runtime_paths.append(bundle_path if bundle_path.exists() else wasm_path)
+            if not bundle_path.exists():
+                runtime_paths.append(model_path)
+        else:
+            runtime_paths.extend([bundle_path, wasm_path, model_path])
+        return runtime_paths
 
     def _node_runtime_ready(self) -> bool:
         return bool(shutil.which(settings.ACCENTAI_DSP_NODE_BIN))
@@ -516,7 +534,7 @@ class AccentAiManager:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail='AccentAI service is stopped.',
             )
-        missing = [str(path) for path in self._required_files().values() if not path.exists()]
+        missing = [str(path) for path in self._required_runtime_paths() if not path.exists()]
         if missing:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -549,7 +567,15 @@ class AccentAiManager:
             and self._host_start_script().exists()
             and self._host_stop_script().exists()
         )
-        ready = self._node_runtime_ready() and all(path.exists() for path in required_files.values()) and host_scripts_ready
+        bundle_ready = required_files['dsp_bundle'].exists()
+        split_assets_ready = required_files['dsp_wasm'].exists() and required_files['dsp_model'].exists()
+        ready = (
+            self._node_runtime_ready()
+            and required_files['dsp_root'].exists()
+            and required_files['dsp_script'].exists()
+            and (bundle_ready or split_assets_ready)
+            and host_scripts_ready
+        )
         if ready:
             self._ensure_idle_session_async()
         return {
@@ -569,6 +595,7 @@ class AccentAiManager:
             'tts_sample_rate': settings.ACCENTAI_DSP_SAMPLE_RATE,
             'dsp_sample_rate': settings.ACCENTAI_DSP_SAMPLE_RATE,
             'dsp_packet_samples': settings.ACCENTAI_DSP_PACKET_SAMPLES,
+            'dsp_assets_mode': 'bundle' if bundle_ready else ('split' if split_assets_ready else 'missing'),
             'required_files': {
                 **{key: str(path) for key, path in required_files.items()},
                 'host_start_script': str(self._host_start_script()),

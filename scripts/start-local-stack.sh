@@ -203,8 +203,12 @@ ensure_host_postgres
 
 require_path "$ACCENTAI_DIR" "AccentAI directory not found: $ACCENTAI_DIR"
 require_path "$ACCENTAI_DIR/src/main.py" "AccentAI runtime entrypoint missing: $ACCENTAI_DIR/src/main.py"
-require_path "$ACCENTAI_DIR/assets/dsp.wasm" "AccentAI DSP wasm missing: $ACCENTAI_DIR/assets/dsp.wasm"
-require_path "$ACCENTAI_DIR/assets/accent.model" "AccentAI model missing: $ACCENTAI_DIR/assets/accent.model"
+if [[ -f "$ACCENTAI_DIR/assets/accentai.onnx" ]]; then
+  echo "AccentAI bundle found: $ACCENTAI_DIR/assets/accentai.onnx"
+else
+  require_path "$ACCENTAI_DIR/assets/dsp.wasm" "AccentAI DSP wasm missing: $ACCENTAI_DIR/assets/dsp.wasm"
+  require_path "$ACCENTAI_DIR/assets/accent.model" "AccentAI model missing: $ACCENTAI_DIR/assets/accent.model"
+fi
 require_path "$WEB_DIR/package.json" "Missing $WEB_DIR/package.json"
 require_path "$API_DIR/requirements.txt" "Missing $API_DIR/requirements.txt"
 

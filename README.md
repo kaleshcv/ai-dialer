@@ -44,6 +44,7 @@ AccentAI host-control settings:
 ACCENTAI_DSP_ROOT=
 ACCENTAI_DSP_NODE_BIN=node
 ACCENTAI_DSP_SCRIPT=
+ACCENTAI_DSP_BUNDLE=
 ACCENTAI_DSP_WASM=
 ACCENTAI_DSP_MODEL=
 ACCENTAI_HOST_OUTPUT_NAME=AccentAI_Output
@@ -75,8 +76,11 @@ The repository includes these helper scripts:
 The API expects the vendored AccentAI runtime here:
 
 - `third_party/AccentAI/src/index.js`
+- `third_party/AccentAI/assets/accentai.onnx`
 - `third_party/AccentAI/assets/dsp.wasm`
 - `third_party/AccentAI/assets/accent.model`
+
+If `third_party/AccentAI/assets/accentai.onnx` exists, the stack can run from that single bundled DSP asset file instead of requiring both split files at startup.
 
 Important limitation:
 

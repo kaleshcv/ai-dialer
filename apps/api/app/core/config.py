@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     ACCENTAI_DSP_ROOT: str = str(_default_accentai_dsp_root())
     ACCENTAI_DSP_NODE_BIN: str = 'node'
     ACCENTAI_DSP_SCRIPT: str = str(_default_accentai_dsp_root() / 'src' / 'index.js')
+    ACCENTAI_DSP_BUNDLE: str = str(_default_accentai_dsp_root() / 'assets' / 'accentai.onnx')
     ACCENTAI_DSP_WASM: str = str(_default_accentai_dsp_root() / 'assets' / 'dsp.wasm')
     ACCENTAI_DSP_MODEL: str = str(_default_accentai_dsp_root() / 'assets' / 'accent.model')
     ACCENTAI_DSP_PACKET_SAMPLES: int = 512

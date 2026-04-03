@@ -2,7 +2,7 @@
 
 ## Goal
 
-Move the current Linux AccentAI call path toward a Krisp-like architecture without breaking the working UI flow:
+Move the current Linux AccentAI call path toward a direct low-latency processing architecture without breaking the working UI flow:
 
 - `System Mic` keeps sending raw microphone audio
 - `AccentAI Mic` keeps sending accent-converted audio
