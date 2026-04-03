@@ -16,6 +16,7 @@ PID_FILE="${ACCENTAI_HOST_PID_FILE:-$ROOT_DIR/run/accentai-host.pid}"
 PGID_FILE="${ACCENTAI_HOST_PGID_FILE:-${PID_FILE%.pid}.pgid}"
 LOG_FILE="${ACCENTAI_HOST_LOG_FILE:-$ROOT_DIR/run/accentai-host.log}"
 OUTPUT_NAME="${ACCENTAI_HOST_OUTPUT_NAME:-AccentAI_Output}"
+APPLICATION_NAME="${ACCENTAI_HOST_APPLICATION_NAME:-AccentAI}"
 SETUP_SCRIPT="${ACCENTAI_HOST_SETUP_SCRIPT:-$ROOT_DIR/scripts/setup-accentai-linux-audio.sh}"
 PYTHON_BIN="${ACCENTAI_HOST_PYTHON_BIN:-}"
 
@@ -172,6 +173,19 @@ if [[ -z "$PYTHON_BIN" ]]; then
   exit 1
 fi
 
+if [[ -x "$ACCENTAI_DIR/venv/bin/python" ]]; then
+  ACCENTAI_NAMED_PYTHON="$ACCENTAI_DIR/venv/bin/AccentAI"
+  if [[ -L "$ACCENTAI_NAMED_PYTHON" ]]; then
+    rm -f "$ACCENTAI_NAMED_PYTHON"
+  fi
+  if [[ ! -x "$ACCENTAI_NAMED_PYTHON" ]]; then
+    cp "$ACCENTAI_DIR/venv/bin/python" "$ACCENTAI_NAMED_PYTHON"
+  fi
+  if [[ -x "$ACCENTAI_NAMED_PYTHON" ]]; then
+    PYTHON_BIN="$ACCENTAI_NAMED_PYTHON"
+  fi
+fi
+
 export VOICEDSP_HTTP_ENABLED="${VOICEDSP_HTTP_ENABLED:-0}"
 export VOICEDSP_VB_OUTPUT_NAME="$OUTPUT_NAME"
 export PULSE_SINK="$OUTPUT_NAME"
@@ -191,7 +205,14 @@ if [[ -n "$PULSE_SOURCE_NAME" ]]; then
 fi
 export PYTHONUNBUFFERED=1
 
-setsid "$PYTHON_BIN" "$ACCENTAI_DIR/src/main.py" run </dev/null >>"$LOG_FILE" 2>&1 &
+HOST_APPLICATION_ICON_NAME="${ACCENTAI_HOST_APPLICATION_ICON_NAME:-audio-input-microphone}"
+HOST_MEDIA_ROLE="${ACCENTAI_HOST_MEDIA_ROLE:-phone}"
+
+setsid env \
+  "PULSE_PROP_application.name=$APPLICATION_NAME" \
+  "PULSE_PROP_application.icon_name=$HOST_APPLICATION_ICON_NAME" \
+  "PULSE_PROP_media.role=$HOST_MEDIA_ROLE" \
+  "$PYTHON_BIN" "$ACCENTAI_DIR/src/main.py" run </dev/null >>"$LOG_FILE" 2>&1 &
 HOST_PID=$!
 HOST_PGID="$(read_pgid "$HOST_PID")"
 
