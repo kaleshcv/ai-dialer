@@ -150,6 +150,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
   const { aor, authPassword, authUsername, displayName, domain, wsUrl } = browserVoiceConfig
   const audioRef = useRef(null)
   const monitorAudioRef = useRef(null)
+  const toneAudioRef = useRef(null)
   const monitorAudioContextRef = useRef(null)
   const monitorAudioSourceRef = useRef(null)
   const monitorAudioGainRef = useRef(null)
@@ -200,6 +201,83 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
   const [callDurationSeconds, setCallDurationSeconds] = useState(0)
   const [message, setMessage] = useState('Browser SIP.js softphone is ready to connect.')
 
+  function buildToneUrl(segments) {
+    const sampleRate = 24000
+    const totalSamples = Math.max(
+      1,
+      segments.reduce((sum, segment) => sum + Math.max(1, Math.floor(sampleRate * (segment.durationSeconds || 0))), 0),
+    )
+    const pcm = new Int16Array(totalSamples)
+    let cursor = 0
+
+    segments.forEach((segment) => {
+      const sampleCount = Math.max(1, Math.floor(sampleRate * (segment.durationSeconds || 0)))
+      const fadeSamples = Math.max(1, Math.floor(sampleRate * Math.min(0.015, (segment.durationSeconds || 0) / 4)))
+
+      for (let index = 0; index < sampleCount && cursor < totalSamples; index += 1, cursor += 1) {
+        if (!segment.frequency) {
+          pcm[cursor] = 0
+          continue
+        }
+
+        let envelope = 1
+        if (index < fadeSamples) {
+          envelope = index / fadeSamples
+        } else if (index > sampleCount - fadeSamples) {
+          envelope = Math.max(0, (sampleCount - index) / fadeSamples)
+        }
+
+        const sample =
+          Math.sin((2 * Math.PI * segment.frequency * index) / sampleRate) * envelope * Math.max(0, Math.min(1, segment.amplitude || 0.18))
+        pcm[cursor] = Math.max(-1, Math.min(1, sample)) * 32767
+      }
+    })
+
+    while (cursor < totalSamples) {
+      pcm[cursor] = 0
+      cursor += 1
+    }
+
+    const byteRate = sampleRate * 2
+    const blockAlign = 2
+    const dataSize = pcm.byteLength
+    const buffer = new ArrayBuffer(44 + dataSize)
+    const view = new DataView(buffer)
+
+    const writeAscii = (offset, value) => {
+      for (let index = 0; index < value.length; index += 1) {
+        view.setUint8(offset + index, value.charCodeAt(index))
+      }
+    }
+
+    writeAscii(0, 'RIFF')
+    view.setUint32(4, 36 + dataSize, true)
+    writeAscii(8, 'WAVE')
+    writeAscii(12, 'fmt ')
+    view.setUint32(16, 16, true)
+    view.setUint16(20, 1, true)
+    view.setUint16(22, 1, true)
+    view.setUint32(24, sampleRate, true)
+    view.setUint32(28, byteRate, true)
+    view.setUint16(32, blockAlign, true)
+    view.setUint16(34, 16, true)
+    writeAscii(36, 'data')
+    view.setUint32(40, dataSize, true)
+    new Int16Array(buffer, 44).set(pcm)
+
+    const bytes = new Uint8Array(buffer)
+    let binary = ''
+    for (let index = 0; index < bytes.length; index += 1) {
+      binary += String.fromCharCode(bytes[index])
+    }
+
+    return `data:audio/wav;base64,${window.btoa(binary)}`
+  }
+
+  const callStartBeepUrlRef = useRef('')
+  const callAnsweredBeepUrlRef = useRef('')
+  const callEndedToneUrlRef = useRef('')
+
   function prepareAudioElement() {
     const audioElement = audioRef.current
     if (!audioElement) {
@@ -210,6 +288,29 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     audioElement.volume = 1
     audioElement.autoplay = true
     audioElement.playsInline = true
+
+    return audioElement
+  }
+
+  function prepareToneAudioElement(toneUrlRef, buildTone) {
+    const audioElement = toneAudioRef.current
+    if (!audioElement) {
+      return null
+    }
+
+    audioElement.muted = false
+    audioElement.volume = 1
+    audioElement.autoplay = false
+    audioElement.playsInline = true
+    audioElement.preload = 'auto'
+
+    if (!toneUrlRef.current) {
+      toneUrlRef.current = buildTone()
+    }
+
+    if (audioElement.src !== toneUrlRef.current) {
+      audioElement.src = toneUrlRef.current
+    }
 
     return audioElement
   }
@@ -248,6 +349,68 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
 
       throw error
     }
+  }
+
+  async function syncToneOutputDevice() {
+    const audioElement = prepareToneAudioElement()
+    if (!audioElement || typeof audioElement.setSinkId !== 'function') {
+      return
+    }
+
+    const preferredSinkId = systemOutputDeviceIdRef.current || 'default'
+    try {
+      await audioElement.setSinkId(preferredSinkId)
+    } catch {
+      if (preferredSinkId !== 'default') {
+        try {
+          await audioElement.setSinkId('default')
+        } catch {
+          // Let the browser keep its current route when sink rebinding is unsupported.
+        }
+      }
+    }
+  }
+
+  async function playTone(toneUrlRef, buildTone) {
+    const audioElement = prepareToneAudioElement(toneUrlRef, buildTone)
+    if (!audioElement) {
+      return
+    }
+
+    await syncToneOutputDevice().catch(() => {})
+    audioElement.pause()
+    audioElement.currentTime = 0
+    await audioElement.play()
+  }
+
+  async function playCallStartBeep() {
+    await playTone(callStartBeepUrlRef, () =>
+      buildToneUrl([
+        { durationSeconds: 0.14, frequency: 660, amplitude: 0.18 },
+      ]),
+    )
+  }
+
+  async function playCallAnsweredBeep() {
+    await playTone(callAnsweredBeepUrlRef, () =>
+      buildToneUrl([
+        { durationSeconds: 0.075, frequency: 880, amplitude: 0.16 },
+        { durationSeconds: 0.05, frequency: 0, amplitude: 0 },
+        { durationSeconds: 0.075, frequency: 880, amplitude: 0.16 },
+      ]),
+    )
+  }
+
+  async function playCallEndedTone() {
+    await playTone(callEndedToneUrlRef, () =>
+      buildToneUrl([
+        { durationSeconds: 0.08, frequency: 620, amplitude: 0.14 },
+        { durationSeconds: 0.035, frequency: 0, amplitude: 0 },
+        { durationSeconds: 0.095, frequency: 480, amplitude: 0.13 },
+        { durationSeconds: 0.04, frequency: 0, amplitude: 0 },
+        { durationSeconds: 0.11, frequency: 360, amplitude: 0.12 },
+      ]),
+    )
   }
 
   async function primeAudioOutput({ reportBlocked = false } = {}) {
@@ -522,6 +685,11 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
         .catch(() => {})
 
       stopMicMonitor({ resetState: false })
+      const toneAudioElement = toneAudioRef.current
+      if (toneAudioElement) {
+        toneAudioElement.pause()
+        toneAudioElement.currentTime = 0
+      }
     }
   }, [])
 
@@ -747,6 +915,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
           }
 
           stopMicMonitor()
+          void playCallAnsweredBeep().catch(() => {})
           setStatus('in-call')
           setCallSetupDurationMs(callDialStartedAtRef.current ? Math.max(0, Date.now() - callDialStartedAtRef.current) : 0)
           setMessage('Call answered. Starting browser audio...')
@@ -788,6 +957,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
             return
           }
 
+          void playCallStartBeep().catch(() => {})
           setCallStartedAt(Date.now())
           setStatus('dialing')
           setMessage('Call created. Waiting for Asterisk to answer.')
@@ -797,6 +967,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
             return
           }
 
+          void playCallEndedTone().catch(() => {})
           rawLocalStreamRef.current = null
           outboundLocalStreamRef.current = null
           void stopAccentAiDirectStream({ clearFallbackReason: true }).catch(() => {})
@@ -1247,7 +1418,33 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
       setCallSetupDurationMs(0)
       setActiveCallPath(accentAiSelectedInputRef.current === 'accentai' ? 'AccentAI virtual mic' : 'Browser default')
       setMessage(`Dialing ${target} through Asterisk...`)
-      await simpleUser.call(target)
+      await simpleUser.call(
+        target,
+        {
+          earlyMedia: true,
+        },
+        {
+          requestDelegate: {
+            onProgress: (response) => {
+              const statusCode = Number(response?.message?.statusCode || 0)
+
+              if (statusCode === 180) {
+                if (mountedRef.current) {
+                  setMessage('Ringing... waiting for early media or answer from Asterisk.')
+                }
+                return
+              }
+
+              if (statusCode === 183) {
+                if (mountedRef.current) {
+                  setMessage('Caller tune is active from Asterisk.')
+                }
+                void ensureRemoteAudioIsPlaying().catch(() => {})
+              }
+            },
+          },
+        },
+      )
     } catch (error) {
       setStatus('error')
       setMessage(`Browser call failed: ${formatError(error)}`)
@@ -1568,6 +1765,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
           onPause={() => setAudioState('idle')}
           onError={() => setAudioState('blocked')}
         />
+        <audio ref={toneAudioRef} playsInline className="browser-voice-panel__monitor-audio" />
         <audio ref={monitorAudioRef} autoPlay playsInline className="browser-voice-panel__monitor-audio" />
       </div>
     </div>
