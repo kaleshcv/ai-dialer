@@ -33,3 +33,16 @@ class AccentAiResetResponse(BaseModel):
 class AccentAiHostControlResponse(BaseModel):
     status: str = 'ok'
     running: bool
+
+
+class AccentAiAudioDefaultsRequest(BaseModel):
+    input_label: str = Field(min_length=1, max_length=256)
+    output_label: str = Field(min_length=1, max_length=256)
+
+
+class AccentAiAudioDefaultsResponse(BaseModel):
+    status: str = 'ok'
+    default_source: str
+    default_source_label: str
+    default_sink: str
+    default_sink_label: str

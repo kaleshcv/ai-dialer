@@ -3,11 +3,12 @@ import { Web } from 'sip.js'
 import {
   ACCENT_AI_INPUT_OPTIONS,
   ACCENT_AI_LANGUAGE_OPTIONS,
-  ACCENT_AI_MODE_OPTIONS,
+  choosePreferredAudioProfile,
   findAccentAiVirtualInputDevice,
-  findSystemInputDevice,
   getAccentAiInfo,
   getAccentAiWebSocketUrl,
+  listPreferredAudioProfiles,
+  setAccentAiAudioDefaults,
   startAccentAiHost,
   stopAccentAiHost,
 } from '../lib/accentAi.js'
@@ -89,6 +90,10 @@ function getMicSourceLabel(source) {
   return source === 'accentai' ? 'AccentAI Mic' : 'System Mic'
 }
 
+function getAudioDeviceProfileLabel(profile) {
+  return profile?.label || 'System - Built-in Audio'
+}
+
 function formatDuration(totalSeconds) {
   const safeSeconds = Math.max(0, totalSeconds | 0)
   const hours = Math.floor(safeSeconds / 3600)
@@ -153,13 +158,15 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
   const isRegisteredRef = useRef(false)
   const accentAiSelectedInputRef = useRef('system')
   const accentAiLanguageRef = useRef('en-US')
-  const accentAiModeRef = useRef('latency')
   const accentAiMicCleanupRef = useRef(true)
   const accentAiVirtualDeviceIdRef = useRef('')
   const systemInputDeviceIdRef = useRef('')
+  const systemOutputDeviceIdRef = useRef('default')
+  const selectedAudioProfileIdRef = useRef('system')
   const rawLocalStreamRef = useRef(null)
   const outboundLocalStreamRef = useRef(null)
   const accentAiDirectStreamRef = useRef(null)
+  const accentAiMonitorDirectStreamRef = useRef(null)
   const monitorStreamRef = useRef(null)
   const callDialStartedAtRef = useRef(null)
   const [destination, setDestination] = useState(normalizeBrowserDialNumber(defaultDestination))
@@ -168,7 +175,6 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
   const [audioState, setAudioState] = useState('idle')
   const [accentAiSelectedInput, setAccentAiSelectedInput] = useState('system')
   const [accentAiLanguage, setAccentAiLanguage] = useState('en-US')
-  const [accentAiMode, setAccentAiMode] = useState('latency')
   const [accentAiMicCleanup, setAccentAiMicCleanup] = useState(true)
   const [accentAiRuntime, setAccentAiRuntime] = useState('stopped')
   const [accentAiBackend, setAccentAiBackend] = useState('AccentAI DSP')
@@ -176,7 +182,11 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
   const [accentAiControlMode, setAccentAiControlMode] = useState('device-control')
   const [accentAiServiceEnabled, setAccentAiServiceEnabled] = useState(false)
   const [accentAiVirtualDeviceLabel, setAccentAiVirtualDeviceLabel] = useState('')
+  const [audioDeviceProfiles, setAudioDeviceProfiles] = useState([])
+  const [selectedAudioProfileId, setSelectedAudioProfileId] = useState('system')
+  const [selectedAudioProfileLabel, setSelectedAudioProfileLabel] = useState('System - Built-in Audio')
   const [systemInputDeviceLabel, setSystemInputDeviceLabel] = useState('')
+  const [systemOutputDeviceLabel, setSystemOutputDeviceLabel] = useState('')
   const [activeInputTrackLabel, setActiveInputTrackLabel] = useState('')
   const [activeCallPath, setActiveCallPath] = useState('Browser default')
   const [accentAiDirectStats, setAccentAiDirectStats] = useState(null)
@@ -210,10 +220,33 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
       return
     }
 
+    const preferredSinkId = systemOutputDeviceIdRef.current || 'default'
     try {
-      await audioElement.setSinkId('default')
-    } catch {
-      // Ignore unsupported or blocked sink switching and let the browser use its current default route.
+      await audioElement.setSinkId(preferredSinkId)
+    } catch (error) {
+      // If a remembered browser sink id went stale, fall back to the current OS default after
+      // re-applying the selected system route so live call playback still lands on the chosen device.
+      try {
+        if (systemInputDeviceLabel && systemOutputDeviceLabel) {
+          await setAccentAiAudioDefaults({
+            inputLabel: systemInputDeviceLabel,
+            outputLabel: systemOutputDeviceLabel,
+          })
+        }
+      } catch {
+        // Keep the original sink error as the main failure signal.
+      }
+
+      if (preferredSinkId !== 'default') {
+        try {
+          await audioElement.setSinkId('default')
+          return
+        } catch {
+          // Fall through and surface the original sink error below.
+        }
+      }
+
+      throw error
     }
   }
 
@@ -256,6 +289,40 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     return audioElement
   }
 
+  async function syncMonitorOutputDevice() {
+    const audioElement = prepareMonitorAudioElement()
+    if (!audioElement || typeof audioElement.setSinkId !== 'function') {
+      return
+    }
+
+    const preferredSinkId = systemOutputDeviceIdRef.current || 'default'
+    try {
+      await audioElement.setSinkId(preferredSinkId)
+    } catch (error) {
+      try {
+        if (systemInputDeviceLabel && systemOutputDeviceLabel) {
+          await setAccentAiAudioDefaults({
+            inputLabel: systemInputDeviceLabel,
+            outputLabel: systemOutputDeviceLabel,
+          })
+        }
+      } catch {
+        // Keep the original sink error as the main failure signal.
+      }
+
+      if (preferredSinkId !== 'default') {
+        try {
+          await audioElement.setSinkId('default')
+          return
+        } catch {
+          // Fall through and surface the original sink error below.
+        }
+      }
+
+      throw error
+    }
+  }
+
   function stopMicMonitor({ resetState = true } = {}) {
     const audioElement = monitorAudioRef.current
     const monitorStream = monitorStreamRef.current
@@ -286,6 +353,12 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     if (monitorStream) {
       monitorStream.getTracks().forEach((track) => track.stop())
       monitorStreamRef.current = null
+    }
+
+    const monitorDirectStream = accentAiMonitorDirectStreamRef.current
+    accentAiMonitorDirectStreamRef.current = null
+    if (monitorDirectStream) {
+      monitorDirectStream.stop().catch(() => {})
     }
 
     if (mountedRef.current) {
@@ -378,6 +451,57 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     return directStream
   }
 
+  async function resolveAudioDeviceProfiles(options = {}) {
+    const {
+      preserveSelection = true,
+      preferredProfileId = selectedAudioProfileIdRef.current,
+      autoPromoteHigherPriority = true,
+    } = options
+    const accentAiDevice =
+      accentAiVirtualDeviceIdRef.current || accentAiVirtualDeviceLabel ? await findAccentAiVirtualInputDevice().catch(() => null) : null
+    const profiles = await listPreferredAudioProfiles({ accentAiDevice })
+    const nextProfile = choosePreferredAudioProfile(profiles, preferredProfileId, {
+      preserveSelection,
+      autoPromoteHigherPriority,
+    })
+
+    setAudioDeviceProfiles(profiles)
+    selectedAudioProfileIdRef.current = nextProfile?.id || 'system'
+    setSelectedAudioProfileId(nextProfile?.id || 'system')
+    setSelectedAudioProfileLabel(getAudioDeviceProfileLabel(nextProfile))
+    systemInputDeviceIdRef.current = nextProfile?.inputDeviceId || ''
+    systemOutputDeviceIdRef.current = nextProfile?.outputDeviceId || 'default'
+    setSystemInputDeviceLabel(nextProfile?.inputLabel || '')
+    setSystemOutputDeviceLabel(nextProfile?.outputLabel || '')
+    return {
+      profiles,
+      selectedProfile: nextProfile,
+    }
+  }
+
+  async function applySystemAudioDefaultsForProfile(profile) {
+    if (!profile?.inputLabel || !profile?.outputLabel) {
+      return
+    }
+
+    await setAccentAiAudioDefaults({
+      inputLabel: profile.inputLabel,
+      outputLabel: profile.outputLabel,
+    })
+  }
+
+  async function syncSelectedAudioProfile(options = {}) {
+    const { preserveSelection = true, preferredProfileId = selectedAudioProfileIdRef.current, autoPromoteHigherPriority = true } = options
+    const { selectedProfile } = await resolveAudioDeviceProfiles({
+      preserveSelection,
+      preferredProfileId,
+      autoPromoteHigherPriority,
+    })
+    await applySystemAudioDefaultsForProfile(selectedProfile)
+    await syncBrowserOutputDevice().catch(() => {})
+    return selectedProfile
+  }
+
   useEffect(() => {
     mountedRef.current = true
 
@@ -417,10 +541,6 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
   useEffect(() => {
     accentAiLanguageRef.current = accentAiLanguage
   }, [accentAiLanguage])
-
-  useEffect(() => {
-    accentAiModeRef.current = accentAiMode
-  }, [accentAiMode])
 
   useEffect(() => {
     accentAiMicCleanupRef.current = accentAiMicCleanup
@@ -498,12 +618,8 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
   }
 
   async function resolveSystemInputDevice() {
-    const accentAiDevice =
-      accentAiVirtualDeviceIdRef.current || accentAiVirtualDeviceLabel ? await findAccentAiVirtualInputDevice().catch(() => null) : null
-    const device = await findSystemInputDevice({ accentAiDevice })
-    systemInputDeviceIdRef.current = device?.deviceId || ''
-    setSystemInputDeviceLabel(device?.label || '')
-    return device
+    const { selectedProfile } = await resolveAudioDeviceProfiles()
+    return selectedProfile
   }
 
   useEffect(() => {
@@ -525,7 +641,8 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
         setAccentAiPacketSamples(Number(info?.dsp_packet_samples || 0))
         setAccentAiRuntime('stopped')
         resolveAccentAiVirtualDevice().catch(() => {})
-        resolveSystemInputDevice().catch(() => {})
+        syncSelectedAudioProfile({ preserveSelection: false })
+          .catch(() => {})
         stopAccentAiHost().catch(() => {})
       })
       .catch(() => {})
@@ -537,9 +654,8 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     }
 
     const handleDeviceChange = () => {
-      void resolveSystemInputDevice().catch(() => {})
       void resolveAccentAiVirtualDevice().catch(() => {})
-      void syncBrowserOutputDevice().catch(() => {})
+      void syncSelectedAudioProfile().catch(() => {})
     }
 
     navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange)
@@ -568,7 +684,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
       const previousDirectStream = accentAiDirectStreamRef.current
       const previousRawStream = rawLocalStreamRef.current
       const previousOutboundStream = outboundLocalStreamRef.current
-      const preferDirectForAccentAi = accentAiModeRef.current !== 'clarity'
+      const preferDirectForAccentAi = true
 
       if (accentAiSelectedInputRef.current === 'accentai' && constraints?.audio && preferDirectForAccentAi) {
         const info = await ensureAccentAiReady()
@@ -615,7 +731,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
 
       if (mountedRef.current) {
         setAccentAiRuntime('running')
-        setActiveCallPath(preferDirectForAccentAi ? 'AccentAI virtual mic (fallback)' : 'AccentAI virtual mic (clarity mode)')
+        setActiveCallPath('AccentAI virtual mic (fallback)')
       }
 
       await cleanupPreviousInputPipeline(previousDirectStream, previousRawStream, previousOutboundStream)
@@ -759,7 +875,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     const rawLocalStream = rawLocalStreamRef.current
     const nextVirtualDeviceId = options.virtualDeviceId ?? accentAiVirtualDeviceIdRef.current
     const nextSystemDeviceId = options.systemDeviceId ?? systemInputDeviceIdRef.current
-    const preferDirect = options.preferDirect ?? (accentAiModeRef.current !== 'clarity')
+    const preferDirect = options.preferDirect ?? true
 
     if (!sessionDescriptionHandler || !rawLocalStream) {
       setAccentAiRuntime(nextInputSource === 'accentai' ? 'ready' : 'stopped')
@@ -811,9 +927,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
       setAccentAiRuntime(nextInputSource === 'accentai' ? 'running' : 'stopped')
       setActiveCallPath(
         nextInputSource === 'accentai'
-          ? preferDirect
-            ? 'AccentAI virtual mic (fallback)'
-            : 'AccentAI virtual mic (clarity mode)'
+          ? 'AccentAI virtual mic (fallback)'
           : 'Browser default',
       )
       rawLocalStreamRef.current?.getTracks?.().forEach((track) => track.stop())
@@ -838,7 +952,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
       stopMicMonitor()
 
       let accentAiDevice = null
-      let systemDevice = null
+      let systemProfile = null
       if (nextInputSource === 'accentai') {
         const info = await ensureAccentAiReady()
         if (!info?.host_pipeline_running) {
@@ -852,7 +966,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
         await stopAccentAiHost().catch(() => {})
         setAccentAiServiceEnabled(false)
         setAccentAiRuntime('stopped')
-        systemDevice = await resolveSystemInputDevice()
+        systemProfile = await resolveSystemInputDevice()
       }
 
       accentAiSelectedInputRef.current = nextInputSource
@@ -864,7 +978,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
 
       await applyAccentAiToLiveCall(nextInputSource, {
         virtualDeviceId: accentAiDevice?.deviceId || accentAiVirtualDeviceIdRef.current,
-        systemDeviceId: systemDevice?.deviceId || systemInputDeviceIdRef.current,
+        systemDeviceId: systemProfile?.inputDeviceId || systemInputDeviceIdRef.current,
       })
 
       if (!rawLocalStreamRef.current) {
@@ -895,20 +1009,6 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     await applyAccentAiToLiveCall('accentai')
   }
 
-  async function handleAccentAiModeChange(nextMode) {
-    setAccentAiMode(nextMode)
-
-    if (accentAiSelectedInputRef.current === 'accentai') {
-      setAccentAiRuntime('ready')
-      await applyAccentAiToLiveCall('accentai')
-      setMessage(
-        nextMode === 'clarity'
-          ? 'Accent mode set to Clarity. AccentAI calls will prefer the virtual mic path for better quality.'
-          : 'Accent mode set to Latency. AccentAI calls will prefer the direct low-latency path.',
-      )
-    }
-  }
-
   async function handleAccentAiMicCleanupToggle() {
     const nextValue = !accentAiMicCleanupRef.current
     setAccentAiMicCleanup(nextValue)
@@ -922,20 +1022,44 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
   async function startMicMonitor() {
     setMonitorState('starting')
 
+    let directMonitorStream = null
     if (accentAiSelectedInputRef.current === 'accentai') {
       const info = await ensureAccentAiReady()
       if (!info?.host_pipeline_running) {
         throw new Error('AccentAI host service is not running.')
       }
-      const device = await waitForAccentAiVirtualDevice()
-      if (!device) {
-        throw new Error('AccentAI microphone source is not visible to the browser yet.')
-      }
+      await resolveAudioDeviceProfiles().catch(() => null)
+      directMonitorStream = await createAccentAiRealtimeStream({
+        websocketUrl: getAccentAiWebSocketUrl(),
+        sampleRate: Number(info?.dsp_sample_rate || accentAiDspSampleRate || 16000),
+        packetSamples: Number(info?.dsp_packet_samples || accentAiPacketSamples || 512),
+        audioConstraints: buildAccentAiDirectInputConstraints({
+          systemDeviceId: systemInputDeviceIdRef.current,
+        }),
+      })
     } else {
       await resolveSystemInputDevice()
     }
 
     stopMicMonitor({ resetState: false })
+
+    if (directMonitorStream) {
+      const audioElement = prepareMonitorAudioElement()
+      if (!audioElement) {
+        await directMonitorStream.stop().catch(() => {})
+        throw new Error('AccentAI monitor audio element is not available.')
+      }
+
+      audioElement.srcObject = directMonitorStream.stream
+      await syncMonitorOutputDevice()
+      await audioElement.play()
+
+      accentAiMonitorDirectStreamRef.current = directMonitorStream
+      setActiveInputTrackLabel(directMonitorStream.inputTrackLabel || '')
+      setMonitorState('active')
+      setMessage('AccentAI Mic test is live. You should hear the converted voice through the selected output device.')
+      return
+    }
 
     const monitorStream = await navigator.mediaDevices.getUserMedia({
       audio: buildAccentAiAudioConstraints(),
@@ -945,7 +1069,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     const audioContext = new window.AudioContext()
     const sourceNode = audioContext.createMediaStreamSource(monitorStream)
     const gainNode = audioContext.createGain()
-    gainNode.gain.value = accentAiSelectedInputRef.current === 'accentai' ? 0.9 : 0.2
+    gainNode.gain.value = 0.2
     sourceNode.connect(gainNode)
     gainNode.connect(audioContext.destination)
     await audioContext.resume()
@@ -961,9 +1085,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     monitorAudioGainRef.current = gainNode
     setActiveInputTrackLabel(monitorTrack?.label || '')
     setMonitorState('active')
-    setMessage(
-      `${getMicSourceLabel(accentAiSelectedInputRef.current)} test is live. You should hear your voice through the speakers. Use headphones if you hear feedback.`,
-    )
+    setMessage('System Mic test is live. You should hear your voice through the selected output device. Use headphones if you hear feedback.')
   }
 
   async function handleMicMonitorToggle() {
@@ -983,7 +1105,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
   }
 
   async function ensureAccentAiReady() {
-    const info = await getAccentAiInfo()
+      const info = await getAccentAiInfo()
     if (!info?.ready) {
       throw new Error('AccentAI DSP backend is not ready. Install the AccentAI engine assets first.')
     }
@@ -999,7 +1121,40 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     setAccentAiDspSampleRate(Number(refreshedInfo?.dsp_sample_rate || 0))
     setAccentAiPacketSamples(Number(refreshedInfo?.dsp_packet_samples || 0))
     await resolveAccentAiVirtualDevice().catch(() => null)
+    await syncSelectedAudioProfile().catch(() => null)
     return refreshedInfo
+  }
+
+  async function handleAudioDeviceProfileChange(nextProfileId) {
+    try {
+      const shouldRestartMonitor = monitorState === 'active'
+      stopMicMonitor()
+
+      const { selectedProfile } = await resolveAudioDeviceProfiles({
+        preserveSelection: false,
+        preferredProfileId: nextProfileId,
+        autoPromoteHigherPriority: false,
+      })
+
+      await applySystemAudioDefaultsForProfile(selectedProfile)
+      await syncBrowserOutputDevice().catch(() => {})
+
+      if (rawLocalStreamRef.current) {
+        await applyAccentAiToLiveCall(accentAiSelectedInputRef.current, {
+          systemDeviceId: selectedProfile?.inputDeviceId || systemInputDeviceIdRef.current,
+        })
+      }
+
+      if (!rawLocalStreamRef.current) {
+        setMessage(`${getAudioDeviceProfileLabel(selectedProfile)} is selected for browser calls.`)
+      }
+
+      if (shouldRestartMonitor) {
+        await startMicMonitor()
+      }
+    } catch (error) {
+      setMessage(`Audio device could not be changed: ${formatError(error)}`)
+    }
   }
 
   async function handleConnect() {
@@ -1011,9 +1166,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     }
 
     try {
-      if (accentAiSelectedInputRef.current === 'system') {
-        await resolveSystemInputDevice().catch(() => null)
-      }
+      await syncSelectedAudioProfile().catch(() => null)
 
       setStatus('connecting')
       setMessage('Connecting to the SIP WebSocket transport...')
@@ -1038,9 +1191,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     }
 
     try {
-      if (accentAiSelectedInputRef.current === 'system') {
-        await resolveSystemInputDevice().catch(() => null)
-      }
+      await syncSelectedAudioProfile().catch(() => null)
 
       if (!simpleUser.isConnected()) {
         setStatus('connecting')
@@ -1082,9 +1233,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     try {
       stopMicMonitor()
 
-      if (accentAiSelectedInputRef.current === 'system') {
-        await resolveSystemInputDevice().catch(() => null)
-      }
+      await syncSelectedAudioProfile().catch(() => null)
 
       if (!simpleUser.isConnected()) {
         setStatus('connecting')
@@ -1164,8 +1313,22 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
   const micMonitorButtonLabel =
     monitorState === 'starting' ? 'Starting test...' : monitorState === 'active' ? 'Stop test' : 'Test mic'
   const accentAiControls = (
-    <div className="browser-voice-panel__accent-ai-inline browser-voice-panel__accent-ai-inline--sidebar">
+      <div className="browser-voice-panel__accent-ai-inline browser-voice-panel__accent-ai-inline--sidebar">
       <div className="browser-voice-panel__accent-ai-inline-controls">
+        <select
+          className="browser-voice-panel__input browser-voice-panel__accent-ai-select"
+          value={selectedAudioProfileId}
+          onFocus={() => {
+            void resolveAudioDeviceProfiles().catch(() => {})
+          }}
+          onChange={(event) => handleAudioDeviceProfileChange(event.target.value)}
+        >
+          {audioDeviceProfiles.map((profile) => (
+            <option key={profile.id} value={profile.id}>
+              {profile.label}
+            </option>
+          ))}
+        </select>
         <select
           className="browser-voice-panel__input browser-voice-panel__accent-ai-select"
           value={accentAiSelectedInput}
@@ -1186,17 +1349,6 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
           onChange={(event) => handleAccentAiLanguageChange(event.target.value)}
         >
           {ACCENT_AI_LANGUAGE_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <select
-          className="browser-voice-panel__input browser-voice-panel__accent-ai-select"
-          value={accentAiMode}
-          onChange={(event) => handleAccentAiModeChange(event.target.value)}
-        >
-          {ACCENT_AI_MODE_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
@@ -1345,12 +1497,20 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
             <strong>{accentAiServiceEnabled ? 'Running' : 'Stopped'}</strong>
           </div>
           <div className="browser-voice-panel__summary-row">
+            <span>Call device</span>
+            <strong>{selectedAudioProfileLabel}</strong>
+          </div>
+          <div className="browser-voice-panel__summary-row">
             <span>Mic source</span>
             <strong>{accentAiSelectedInput === 'accentai' ? (accentAiVirtualDeviceLabel || 'AccentAI Mic') : 'System microphone'}</strong>
           </div>
           <div className="browser-voice-panel__summary-row">
-            <span>System device</span>
+            <span>Input device</span>
             <strong>{systemInputDeviceLabel || 'Waiting for browser device'}</strong>
+          </div>
+          <div className="browser-voice-panel__summary-row">
+            <span>Output device</span>
+            <strong>{systemOutputDeviceLabel || 'Waiting for browser device'}</strong>
           </div>
           <div className="browser-voice-panel__summary-row">
             <span>Active track</span>
@@ -1387,10 +1547,6 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
           <div className="browser-voice-panel__summary-row">
             <span>Accent language</span>
             <strong>{getAccentAiLabel(accentAiLanguage)}</strong>
-          </div>
-          <div className="browser-voice-panel__summary-row">
-            <span>Accent mode</span>
-            <strong>{accentAiMode === 'clarity' ? 'Clarity' : 'Latency'}</strong>
           </div>
           <div className="browser-voice-panel__summary-row">
             <span>Mic cleanup</span>

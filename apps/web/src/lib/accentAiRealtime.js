@@ -5,6 +5,7 @@ const DEFAULT_BROWSER_SAMPLE_RATE = 48000
 const DEFAULT_MAX_IN_FLIGHT_PACKETS = 4
 const DEFAULT_MAX_PLAYBACK_BACKLOG_SECONDS = 0.12
 const DEFAULT_PLAYBACK_LEAD_SECONDS = 0.04
+const DEFAULT_MONITOR_GAIN = 0.9
 const WORKLET_MODULE_PATH = '/accentai-realtime-worklet.js'
 
 function buildSessionId() {
@@ -41,6 +42,8 @@ export async function createAccentAiRealtimeStream({
   maxInFlightPackets = DEFAULT_MAX_IN_FLIGHT_PACKETS,
   maxPlaybackBacklogSeconds = DEFAULT_MAX_PLAYBACK_BACKLOG_SECONDS,
   playbackLeadSeconds = DEFAULT_PLAYBACK_LEAD_SECONDS,
+  monitorLocally = false,
+  monitorGain = DEFAULT_MONITOR_GAIN,
   onFatalError,
 } = {}) {
   if (typeof window === 'undefined' || !navigator?.mediaDevices?.getUserMedia) {
@@ -88,6 +91,10 @@ export async function createAccentAiRealtimeStream({
   })
   const silentGainNode = audioContext.createGain()
   silentGainNode.gain.value = 0
+  const monitorGainNode = monitorLocally ? audioContext.createGain() : null
+  if (monitorGainNode) {
+    monitorGainNode.gain.value = Math.max(0, Number(monitorGain) || DEFAULT_MONITOR_GAIN)
+  }
 
   let websocket = null
   let stopped = false
@@ -262,6 +269,10 @@ export async function createAccentAiRealtimeStream({
   sourceNode.connect(captureNode)
   captureNode.connect(silentGainNode)
   playbackNode.connect(destination)
+  if (monitorGainNode) {
+    playbackNode.connect(monitorGainNode)
+    monitorGainNode.connect(audioContext.destination)
+  }
   silentGainNode.connect(audioContext.destination)
   await audioContext.resume()
 
@@ -306,6 +317,11 @@ export async function createAccentAiRealtimeStream({
       }
       try {
         playbackNode.disconnect()
+      } catch {
+        // no-op
+      }
+      try {
+        monitorGainNode?.disconnect()
       } catch {
         // no-op
       }

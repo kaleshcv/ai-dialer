@@ -1,10 +1,18 @@
 from fastapi import APIRouter, WebSocket
 
-from app.schemas.accent_ai import AccentAiHostControlResponse, AccentAiInfoOut, AccentAiResetRequest, AccentAiResetResponse
+from app.schemas.accent_ai import (
+    AccentAiAudioDefaultsRequest,
+    AccentAiAudioDefaultsResponse,
+    AccentAiHostControlResponse,
+    AccentAiInfoOut,
+    AccentAiResetRequest,
+    AccentAiResetResponse,
+)
 from app.services.accent_ai_service import (
     get_accent_ai_info,
     handle_accent_ai_websocket,
     reset_accent_ai_session,
+    set_accent_ai_audio_defaults,
     start_accent_ai_host_pipeline,
     stop_accent_ai_host_pipeline,
 )
@@ -30,6 +38,11 @@ def accent_ai_start():
 @router.post('/stop', response_model=AccentAiHostControlResponse)
 def accent_ai_stop():
     return stop_accent_ai_host_pipeline()
+
+
+@router.post('/audio-defaults', response_model=AccentAiAudioDefaultsResponse)
+def accent_ai_audio_defaults(payload: AccentAiAudioDefaultsRequest):
+    return set_accent_ai_audio_defaults(input_label=payload.input_label, output_label=payload.output_label)
 
 
 @router.websocket('/ws')

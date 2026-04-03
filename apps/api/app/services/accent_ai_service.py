@@ -52,6 +52,118 @@ def _resample_audio(audio: np.ndarray, source_rate: int, target_rate: int) -> np
     return resample_poly(audio, up, down).astype(np.float32, copy=False)
 
 
+def _normalize_audio_label(value: str) -> str:
+    return ' '.join(str(value or '').strip().lower().split())
+
+
+def _list_pactl_json(kind: str) -> list[dict]:
+    if not shutil.which('pactl'):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='pactl is required to manage Linux audio defaults.',
+        )
+
+    completed = subprocess.run(
+        ['pactl', '-f', 'json', 'list', kind],
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(completed.stderr or completed.stdout or f'Could not list PulseAudio {kind}.').strip(),
+        )
+
+    try:
+        payload = json.loads(completed.stdout or '[]')
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f'Could not parse PulseAudio {kind} metadata.',
+        ) from exc
+
+    return payload if isinstance(payload, list) else []
+
+
+def _score_audio_device_match(entry: dict, target_label: str) -> int:
+    normalized_target = _normalize_audio_label(target_label)
+    if not normalized_target:
+        return -1
+
+    properties = entry.get('properties') or {}
+    description = _normalize_audio_label(entry.get('description') or '')
+    device_description = _normalize_audio_label(properties.get('device.description') or '')
+    alias = _normalize_audio_label(properties.get('bluez.alias') or '')
+    card_name = _normalize_audio_label(properties.get('alsa.card_name') or '')
+    name = _normalize_audio_label(entry.get('name') or '')
+    candidates = [description, device_description, alias, card_name, name]
+
+    best_score = -1
+    for candidate in candidates:
+      if not candidate:
+        continue
+      if candidate == normalized_target:
+        best_score = max(best_score, 100)
+      elif normalized_target in candidate:
+        best_score = max(best_score, 80)
+      elif candidate in normalized_target:
+        best_score = max(best_score, 60)
+
+    return best_score
+
+
+def _find_best_audio_device(kind: str, target_label: str) -> dict:
+    entries = _list_pactl_json(kind)
+    filtered_entries = []
+    for entry in entries:
+        name = str(entry.get('name') or '')
+        description = str(entry.get('description') or '')
+        if settings.ACCENTAI_HOST_OUTPUT_NAME in name or settings.ACCENTAI_HOST_OUTPUT_NAME in description:
+            continue
+        if kind == 'sources' and (name.endswith('.monitor') or 'Monitor of' in description):
+            continue
+        filtered_entries.append(entry)
+
+    ranked_entries = sorted(
+        filtered_entries,
+        key=lambda entry: _score_audio_device_match(entry, target_label),
+        reverse=True,
+    )
+    best_entry = ranked_entries[0] if ranked_entries else None
+    best_score = _score_audio_device_match(best_entry or {}, target_label)
+    if not best_entry or best_score < 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Could not match Linux audio {kind[:-1]} for "{target_label}".',
+        )
+
+    return best_entry
+
+
+def set_linux_audio_defaults(*, input_label: str, output_label: str) -> dict:
+    source_entry = _find_best_audio_device('sources', input_label)
+    sink_entry = _find_best_audio_device('sinks', output_label)
+
+    for command in (
+        ['pactl', 'set-default-source', str(source_entry.get('name') or '')],
+        ['pactl', 'set-default-sink', str(sink_entry.get('name') or '')],
+    ):
+        completed = subprocess.run(command, capture_output=True, text=True)
+        if completed.returncode != 0:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(completed.stderr or completed.stdout or f'Failed to run {" ".join(command)}').strip(),
+            )
+
+    return {
+        'status': 'ok',
+        'default_source': str(source_entry.get('name') or ''),
+        'default_source_label': str(source_entry.get('description') or ''),
+        'default_sink': str(sink_entry.get('name') or ''),
+        'default_sink_label': str(sink_entry.get('description') or ''),
+    }
+
+
 def _normalize_audio_level(audio: np.ndarray, target_peak: float = 0.92) -> np.ndarray:
     if audio.size == 0:
         return audio
@@ -613,3 +725,7 @@ def start_accent_ai_host_pipeline() -> dict:
 
 def stop_accent_ai_host_pipeline() -> dict:
     return _manager._stop_host_pipeline()
+
+
+def set_accent_ai_audio_defaults(*, input_label: str, output_label: str) -> dict:
+    return set_linux_audio_defaults(input_label=input_label, output_label=output_label)
