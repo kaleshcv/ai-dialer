@@ -16,6 +16,8 @@ class AccentAiInfoOut(BaseModel):
     asr_model: str | None = None
     tts_model: str | None = None
     tts_sample_rate: int | None = None
+    dsp_sample_rate: int | None = None
+    dsp_packet_samples: int | None = None
     required_files: dict[str, str] = {}
 
 

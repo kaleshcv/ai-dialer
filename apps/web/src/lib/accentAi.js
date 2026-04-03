@@ -17,6 +17,14 @@ const configuredApiBaseUrl = typeof import.meta !== 'undefined' ? import.meta.en
 const apiBaseUrl =
   configuredApiBaseUrl || (typeof window !== 'undefined' ? `${httpProtocol}//${window.location.hostname}:8000` : '')
 
+export function getAccentAiWebSocketUrl() {
+  if (!apiBaseUrl) {
+    return ''
+  }
+
+  return `${apiBaseUrl.replace(/^http/i, 'ws')}/api/v1/accent-ai/ws`
+}
+
 async function fetchJson(url, init) {
   const response = await fetch(url, init)
   if (!response.ok) {
@@ -102,12 +110,15 @@ export async function findSystemInputDevice(options = {}) {
   }
 
   const candidates = audioInputs.filter((device) => !isVirtual(device) && !isExcludedAccentAiDevice(device))
+  const labeledPhysicalCandidates = candidates.filter(
+    (device) => device.deviceId !== 'default' && device.deviceId !== 'communications' && Boolean(device.label),
+  )
   const preferredCandidate =
     candidates.find((device) => device.deviceId === 'default') ||
     candidates.find((device) => device.deviceId === 'communications') ||
-    candidates.find((device) => /headset|headphone|earphone|earbud|hands-?free|bluetooth/i.test(device.label || '')) ||
-    candidates.find((device) => /external|usb|wired/i.test(device.label || '')) ||
-    candidates.find((device) => /built-?in|internal|analog|microphone|mic/i.test(device.label || '')) ||
+    labeledPhysicalCandidates.find((device) => /headset|headphone|earphone|earbud|hands-?free|bluetooth/i.test(device.label || '')) ||
+    labeledPhysicalCandidates.find((device) => /external|usb|wired/i.test(device.label || '')) ||
+    labeledPhysicalCandidates.find((device) => /built-?in|internal|analog|microphone|mic/i.test(device.label || '')) ||
     candidates[0] ||
     null
 

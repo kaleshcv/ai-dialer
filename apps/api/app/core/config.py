@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     ACCENTAI_DSP_SCRIPT: str = str(_default_accentai_dsp_root() / 'src' / 'index.js')
     ACCENTAI_DSP_WASM: str = str(_default_accentai_dsp_root() / 'assets' / 'dsp.wasm')
     ACCENTAI_DSP_MODEL: str = str(_default_accentai_dsp_root() / 'assets' / 'accent.model')
-    ACCENTAI_DSP_PACKET_SAMPLES: int = 1024
+    ACCENTAI_DSP_PACKET_SAMPLES: int = 512
     ACCENTAI_DSP_SAMPLE_RATE: int = 16000
     ACCENTAI_HOST_OUTPUT_NAME: str = 'AccentAI_Output'
     ACCENTAI_HOST_PID_FILE: str = str(Path(__file__).resolve().parents[4] / 'run' / 'accentai-host.pid')

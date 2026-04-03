@@ -45,12 +45,7 @@ def _encode_pcm_bytes(value: np.ndarray) -> bytes:
 def _resample_audio(audio: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
     if source_rate == target_rate or audio.size == 0:
         return audio.astype(np.float32, copy=False)
-    if source_rate % target_rate == 0:
-        step = source_rate // target_rate
-        return audio[::step].astype(np.float32, copy=False)
-    if target_rate % source_rate == 0:
-        repeat = target_rate // source_rate
-        return np.repeat(audio, repeat).astype(np.float32, copy=False)
+
     factor = gcd(source_rate, target_rate)
     up = target_rate // factor
     down = source_rate // factor
@@ -97,6 +92,8 @@ class AccentAiDspSession:
         self._lock = threading.Lock()
         self._process = self._start_process()
         self._dsp_input_remainder = np.zeros(0, dtype=np.float32)
+        self._input_resample_history = np.zeros(0, dtype=np.float32)
+        self._output_resample_history = np.zeros(0, dtype=np.float32)
 
     def _start_process(self) -> subprocess.Popen[bytes]:
         node_bin = shutil.which(settings.ACCENTAI_DSP_NODE_BIN) or settings.ACCENTAI_DSP_NODE_BIN
@@ -157,14 +154,58 @@ class AccentAiDspSession:
                 except subprocess.TimeoutExpired:
                     process.kill()
 
-    def process_audio(self, audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, int]:
+    def _resample_with_history(
+        self,
+        audio: np.ndarray,
+        source_rate: int,
+        target_rate: int,
+        *,
+        history_attr: str,
+        history_duration_seconds: float = 0.008,
+    ) -> np.ndarray:
+        if source_rate == target_rate or audio.size == 0:
+            return audio.astype(np.float32, copy=False)
+
+        history = getattr(self, history_attr)
+        history_samples = max(32, int(round(source_rate * history_duration_seconds)))
+        if history.size:
+            merged = np.concatenate((history, audio), dtype=np.float32)
+            discard_samples = int(round(history.size * target_rate / source_rate))
+        else:
+            merged = audio.astype(np.float32, copy=False)
+            discard_samples = 0
+
+        resampled = _resample_audio(merged, source_rate, target_rate)
+        if discard_samples > 0:
+            if discard_samples >= resampled.size:
+                resampled = np.zeros(0, dtype=np.float32)
+            else:
+                resampled = resampled[discard_samples:]
+
+        next_history = merged[-history_samples:] if merged.size > history_samples else merged
+        setattr(self, history_attr, next_history.astype(np.float32, copy=False))
+        return resampled.astype(np.float32, copy=False)
+
+    def process_audio(
+        self,
+        audio: np.ndarray,
+        sample_rate: int,
+        *,
+        apply_input_conditioning: bool = True,
+        apply_output_polish: bool = True,
+    ) -> tuple[np.ndarray, int]:
         if audio.size == 0:
             return audio.astype(np.float32, copy=False), sample_rate
 
         packet_samples = settings.ACCENTAI_DSP_PACKET_SAMPLES
         dsp_sample_rate = settings.ACCENTAI_DSP_SAMPLE_RATE
-        prepared_input = _condition_input_audio(audio)
-        dsp_audio = _resample_audio(prepared_input, sample_rate, dsp_sample_rate)
+        prepared_input = _condition_input_audio(audio) if apply_input_conditioning else audio.astype(np.float32, copy=False)
+        dsp_audio = self._resample_with_history(
+            prepared_input,
+            sample_rate,
+            dsp_sample_rate,
+            history_attr='_input_resample_history',
+        )
         if self._dsp_input_remainder.size:
             dsp_audio = np.concatenate((self._dsp_input_remainder, dsp_audio), dtype=np.float32)
         process_length = (dsp_audio.size // packet_samples) * packet_samples
@@ -205,8 +246,15 @@ class AccentAiDspSession:
                 ) from exc
 
         dsp_output = np.concatenate(output_chunks, dtype=np.float32)
-        output = _resample_audio(dsp_output, dsp_sample_rate, sample_rate)
-        return _polish_output_audio(output), sample_rate
+        output = self._resample_with_history(
+            dsp_output,
+            dsp_sample_rate,
+            sample_rate,
+            history_attr='_output_resample_history',
+        )
+        if apply_output_polish:
+            output = _polish_output_audio(output)
+        return output.astype(np.float32, copy=False), sample_rate
 
 
 class AccentAiManager:
@@ -433,7 +481,15 @@ class AccentAiManager:
             'session_id': session_id,
         }
 
-    def process_chunk(self, *, session_id: str, sample_rate: int, buffer: str | bytes) -> dict:
+    def process_chunk(
+        self,
+        *,
+        session_id: str,
+        sample_rate: int,
+        buffer: str | bytes,
+        apply_input_conditioning: bool = True,
+        apply_output_polish: bool = True,
+    ) -> dict:
         audio = _decode_pcm_bytes(buffer) if isinstance(buffer, bytes) else _decode_pcm_base64(buffer)
         if audio.size == 0:
             return {
@@ -444,7 +500,12 @@ class AccentAiManager:
             }
 
         session = self._get_or_create_session(session_id)
-        output_audio, output_sample_rate = session.process_audio(audio, sample_rate)
+        output_audio, output_sample_rate = session.process_audio(
+            audio,
+            sample_rate,
+            apply_input_conditioning=apply_input_conditioning,
+            apply_output_polish=apply_output_polish,
+        )
         return {
             'transcript': 'Direct audio conversion',
             'audio': _encode_pcm_base64(output_audio),
@@ -456,6 +517,8 @@ class AccentAiManager:
         await websocket.accept()
         active_session_id = ''
         active_sample_rate = settings.ACCENTAI_DSP_SAMPLE_RATE
+        active_apply_input_conditioning = True
+        active_apply_output_polish = True
         try:
             await websocket.send_json({'type': 'ready', **self.info()})
             while True:
@@ -477,6 +540,8 @@ class AccentAiManager:
                             await websocket.send_json({'type': 'error', 'detail': 'AccentAI start event requires session_id.'})
                             continue
                         active_sample_rate = int(payload.get('sample_rate') or settings.ACCENTAI_DSP_SAMPLE_RATE)
+                        active_apply_input_conditioning = bool(payload.get('apply_input_conditioning', True))
+                        active_apply_output_polish = bool(payload.get('apply_output_polish', True))
                         self._get_or_create_session(session_id)
                         active_session_id = session_id
                         await websocket.send_json({'type': 'started', **self.info(), 'session_id': session_id})
@@ -504,6 +569,8 @@ class AccentAiManager:
                         session_id=active_session_id,
                         sample_rate=active_sample_rate,
                         buffer=message['bytes'],
+                        apply_input_conditioning=active_apply_input_conditioning,
+                        apply_output_polish=active_apply_output_polish,
                     )
                 except HTTPException as exc:
                     await websocket.send_json({'type': 'error', 'detail': str(exc.detail)})

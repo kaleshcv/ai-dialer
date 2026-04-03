@@ -7,9 +7,11 @@ import {
   findAccentAiVirtualInputDevice,
   findSystemInputDevice,
   getAccentAiInfo,
+  getAccentAiWebSocketUrl,
   startAccentAiHost,
   stopAccentAiHost,
 } from '../lib/accentAi.js'
+import { createAccentAiRealtimeStream } from '../lib/accentAiRealtime.js'
 import {
   buildBrowserSipTarget,
   getBrowserVoiceConfig,
@@ -157,7 +159,9 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
   const systemInputDeviceIdRef = useRef('')
   const rawLocalStreamRef = useRef(null)
   const outboundLocalStreamRef = useRef(null)
+  const accentAiDirectStreamRef = useRef(null)
   const monitorStreamRef = useRef(null)
+  const callDialStartedAtRef = useRef(null)
   const [destination, setDestination] = useState(normalizeBrowserDialNumber(defaultDestination))
   const [status, setStatus] = useState('idle')
   const [isRegistered, setIsRegistered] = useState(false)
@@ -174,6 +178,13 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
   const [accentAiVirtualDeviceLabel, setAccentAiVirtualDeviceLabel] = useState('')
   const [systemInputDeviceLabel, setSystemInputDeviceLabel] = useState('')
   const [activeInputTrackLabel, setActiveInputTrackLabel] = useState('')
+  const [activeCallPath, setActiveCallPath] = useState('Browser default')
+  const [accentAiDirectStats, setAccentAiDirectStats] = useState(null)
+  const [accentAiDirectFallbackReason, setAccentAiDirectFallbackReason] = useState('')
+  const [accentAiHostAudioReady, setAccentAiHostAudioReady] = useState(false)
+  const [accentAiDspSampleRate, setAccentAiDspSampleRate] = useState(0)
+  const [accentAiPacketSamples, setAccentAiPacketSamples] = useState(0)
+  const [callSetupDurationMs, setCallSetupDurationMs] = useState(0)
   const [monitorState, setMonitorState] = useState('idle')
   const [callStartedAt, setCallStartedAt] = useState(null)
   const [callDurationSeconds, setCallDurationSeconds] = useState(0)
@@ -286,6 +297,87 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     }
   }
 
+  async function stopAccentAiDirectStream({ clearFallbackReason = false } = {}) {
+    const directStream = accentAiDirectStreamRef.current
+    accentAiDirectStreamRef.current = null
+    setAccentAiDirectStats(null)
+    if (clearFallbackReason) {
+      setAccentAiDirectFallbackReason('')
+    }
+    if (!directStream) {
+      return
+    }
+    await directStream.stop().catch(() => {})
+  }
+
+  async function cleanupPreviousInputPipeline(previousDirectStream, previousRawStream, previousOutboundStream) {
+    if (previousDirectStream) {
+      await previousDirectStream.stop().catch(() => {})
+      return
+    }
+
+    if (previousRawStream) {
+      previousRawStream.getTracks?.().forEach((track) => track.stop())
+    }
+
+    if (previousOutboundStream && previousOutboundStream !== previousRawStream) {
+      previousOutboundStream.getTracks?.().forEach((track) => track.stop())
+    }
+  }
+
+  function buildAccentAiDirectInputConstraints({ systemDeviceId = systemInputDeviceIdRef.current } = {}) {
+    const constraints = {
+      channelCount: 1,
+      sampleRate: accentAiDspSampleRate || 16000,
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    }
+
+    if (systemDeviceId) {
+      constraints.deviceId = { exact: systemDeviceId }
+    }
+
+    return constraints
+  }
+
+  async function createAccentAiDirectCallStream(options = {}) {
+    const systemDeviceId = options.systemDeviceId ?? systemInputDeviceIdRef.current
+    const info = options.info || (await ensureAccentAiReady())
+    const packetSamples = Number(info?.dsp_packet_samples || accentAiPacketSamples || 512)
+    const sampleRate = Number(info?.dsp_sample_rate || accentAiDspSampleRate || 16000)
+    const websocketUrl = getAccentAiWebSocketUrl()
+
+    if (!websocketUrl) {
+      throw new Error('AccentAI realtime WebSocket URL is not available.')
+    }
+
+    const directStream = await createAccentAiRealtimeStream({
+      websocketUrl,
+      sampleRate,
+      packetSamples,
+      audioConstraints: buildAccentAiDirectInputConstraints({ systemDeviceId }),
+      onFatalError: (error) => {
+        if (!mountedRef.current || accentAiSelectedInputRef.current !== 'accentai') {
+          return
+        }
+
+        setAccentAiRuntime('error')
+        setAccentAiDirectStats(null)
+        const fallbackReason = formatError(error)
+        setAccentAiDirectFallbackReason(fallbackReason)
+        setMessage(`AccentAI direct stream failed, falling back to the virtual mic: ${fallbackReason}`)
+        void applyAccentAiToLiveCall('accentai', {
+          preferDirect: false,
+          fallbackReason,
+        })
+      },
+    })
+
+    setAccentAiDirectStats(directStream.getStats())
+    return directStream
+  }
+
   useEffect(() => {
     mountedRef.current = true
 
@@ -302,6 +394,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
         .then(() => simpleUser.hangup().catch(() => {}))
         .then(() => simpleUser.unregister().catch(() => {}))
         .then(() => simpleUser.disconnect().catch(() => {}))
+        .then(() => stopAccentAiDirectStream().catch(() => {}))
         .catch(() => {})
 
       stopMicMonitor({ resetState: false })
@@ -371,7 +464,6 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
         noiseSuppression: true,
         autoGainControl: true,
         channelCount: 1,
-        sampleRate: 16000,
       }
     }
 
@@ -384,7 +476,6 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
       noiseSuppression: true,
       autoGainControl: true,
       channelCount: 1,
-      sampleRate: 16000,
     }
   }
 
@@ -429,6 +520,9 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
         setAccentAiServiceEnabled(false)
         setAccentAiBackend(String(info?.backend || 'accentai-dsp').replace(/-/g, ' '))
         setAccentAiPipeline(String(info?.pipeline || 'control_only_converted_mic_source'))
+        setAccentAiHostAudioReady(Boolean(info?.host_audio_ready))
+        setAccentAiDspSampleRate(Number(info?.dsp_sample_rate || 0))
+        setAccentAiPacketSamples(Number(info?.dsp_packet_samples || 0))
         setAccentAiRuntime('stopped')
         resolveAccentAiVirtualDevice().catch(() => {})
         resolveSystemInputDevice().catch(() => {})
@@ -471,22 +565,60 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
         ...(constraints || {}),
         audio: constraints?.audio ? buildAccentAiAudioConstraints() : constraints?.audio,
       }
+      const previousDirectStream = accentAiDirectStreamRef.current
+      const previousRawStream = rawLocalStreamRef.current
+      const previousOutboundStream = outboundLocalStreamRef.current
+      const preferDirectForAccentAi = accentAiModeRef.current !== 'clarity'
+
+      if (accentAiSelectedInputRef.current === 'accentai' && constraints?.audio && preferDirectForAccentAi) {
+        const info = await ensureAccentAiReady()
+        await resolveSystemInputDevice().catch(() => null)
+
+        try {
+          const directStream = await createAccentAiDirectCallStream({
+            info,
+            systemDeviceId: systemInputDeviceIdRef.current,
+          })
+
+          accentAiDirectStreamRef.current = directStream
+          rawLocalStreamRef.current = directStream.rawStream
+          outboundLocalStreamRef.current = directStream.stream
+          setActiveInputTrackLabel(directStream.inputTrackLabel || systemInputDeviceLabel || '')
+          setAccentAiRuntime('running')
+          setActiveCallPath('AccentAI direct stream')
+          setAccentAiDirectFallbackReason('')
+          await cleanupPreviousInputPipeline(previousDirectStream, previousRawStream, previousOutboundStream)
+          return directStream.stream
+        } catch (error) {
+          const fallbackReason = formatError(error)
+          setAccentAiDirectFallbackReason(fallbackReason)
+          setMessage(`AccentAI direct stream unavailable, falling back to the virtual mic: ${fallbackReason}`)
+          await waitForAccentAiVirtualDevice().catch(() => null)
+        }
+      }
+
       const stream = await baseMediaStreamFactory(nextConstraints, sessionDescriptionHandler, options)
+      const inputTrack = stream.getAudioTracks?.()[0] || null
+      await stopAccentAiDirectStream()
       rawLocalStreamRef.current = stream
+      outboundLocalStreamRef.current = stream
+      setActiveInputTrackLabel(inputTrack?.label || '')
 
       if (accentAiSelectedInputRef.current !== 'accentai' || !constraints?.audio) {
-        outboundLocalStreamRef.current = stream
+        setActiveCallPath('Browser default')
         if (mountedRef.current) {
           setAccentAiRuntime(accentAiSelectedInputRef.current === 'accentai' ? 'ready' : 'stopped')
         }
+        await cleanupPreviousInputPipeline(previousDirectStream, previousRawStream, previousOutboundStream)
         return stream
       }
-      outboundLocalStreamRef.current = stream
 
       if (mountedRef.current) {
         setAccentAiRuntime('running')
+        setActiveCallPath(preferDirectForAccentAi ? 'AccentAI virtual mic (fallback)' : 'AccentAI virtual mic (clarity mode)')
       }
 
+      await cleanupPreviousInputPipeline(previousDirectStream, previousRawStream, previousOutboundStream)
       return stream
     }
 
@@ -500,6 +632,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
 
           stopMicMonitor()
           setStatus('in-call')
+          setCallSetupDurationMs(callDialStartedAtRef.current ? Math.max(0, Date.now() - callDialStartedAtRef.current) : 0)
           setMessage('Call answered. Starting browser audio...')
           ensureRemoteAudioIsPlaying()
             .then(() => {
@@ -550,8 +683,12 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
 
           rawLocalStreamRef.current = null
           outboundLocalStreamRef.current = null
+          void stopAccentAiDirectStream({ clearFallbackReason: true }).catch(() => {})
+          callDialStartedAtRef.current = null
           setCallStartedAt(null)
+          setCallSetupDurationMs(0)
           setCallDurationSeconds(0)
+          setActiveCallPath(accentAiSelectedInputRef.current === 'accentai' ? 'AccentAI virtual mic' : 'Browser default')
           setStatus(isRegisteredRef.current ? 'ready' : simpleUserRef.current?.isConnected() ? 'connected' : 'idle')
           setAccentAiRuntime(accentAiSelectedInputRef.current === 'accentai' ? 'ready' : 'stopped')
           setMessage('Browser call ended.')
@@ -622,6 +759,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     const rawLocalStream = rawLocalStreamRef.current
     const nextVirtualDeviceId = options.virtualDeviceId ?? accentAiVirtualDeviceIdRef.current
     const nextSystemDeviceId = options.systemDeviceId ?? systemInputDeviceIdRef.current
+    const preferDirect = options.preferDirect ?? (accentAiModeRef.current !== 'clarity')
 
     if (!sessionDescriptionHandler || !rawLocalStream) {
       setAccentAiRuntime(nextInputSource === 'accentai' ? 'ready' : 'stopped')
@@ -629,6 +767,36 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     }
 
     try {
+      const previousDirectStream = accentAiDirectStreamRef.current
+      const previousRawStream = rawLocalStreamRef.current
+      const previousOutboundStream = outboundLocalStreamRef.current
+
+      if (nextInputSource === 'accentai' && preferDirect) {
+        try {
+          const info = await ensureAccentAiReady()
+          const directStream = await createAccentAiDirectCallStream({
+            info,
+            systemDeviceId: nextSystemDeviceId,
+          })
+          const nextTrack = directStream.stream.getAudioTracks()[0] || null
+          accentAiDirectStreamRef.current = directStream
+          rawLocalStreamRef.current = directStream.rawStream
+          outboundLocalStreamRef.current = directStream.stream
+          setActiveInputTrackLabel(directStream.inputTrackLabel || nextTrack?.label || systemInputDeviceLabel || '')
+          setAccentAiRuntime('running')
+          setActiveCallPath('AccentAI direct stream')
+          setAccentAiDirectFallbackReason('')
+          await applyOutboundStreamToSession(sessionDescriptionHandler, directStream.stream)
+          await cleanupPreviousInputPipeline(previousDirectStream, previousRawStream, previousOutboundStream)
+          setMessage('The browser call is using the direct AccentAI processed audio stream.')
+          return
+        } catch (directError) {
+          const fallbackReason = formatError(directError)
+          setAccentAiDirectFallbackReason(fallbackReason)
+          setMessage(`AccentAI direct stream unavailable, falling back to the virtual mic: ${fallbackReason}`)
+        }
+      }
+
       const nextInputStream = await navigator.mediaDevices.getUserMedia({
         audio: buildAccentAiAudioConstraints({
           inputSource: nextInputSource,
@@ -638,8 +806,16 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
         video: false,
       })
       const nextTrack = nextInputStream.getAudioTracks()[0] || null
+      await stopAccentAiDirectStream()
       setActiveInputTrackLabel(nextTrack?.label || '')
       setAccentAiRuntime(nextInputSource === 'accentai' ? 'running' : 'stopped')
+      setActiveCallPath(
+        nextInputSource === 'accentai'
+          ? preferDirect
+            ? 'AccentAI virtual mic (fallback)'
+            : 'AccentAI virtual mic (clarity mode)'
+          : 'Browser default',
+      )
       rawLocalStreamRef.current?.getTracks?.().forEach((track) => track.stop())
       rawLocalStreamRef.current = nextInputStream
       outboundLocalStreamRef.current = nextInputStream
@@ -647,7 +823,7 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
       setAccentAiRuntime(nextInputSource === 'accentai' ? 'running' : 'stopped')
       setMessage(
         nextInputSource === 'accentai'
-          ? 'The browser call is using the AccentAI converted microphone source.'
+          ? `The browser call is using the AccentAI virtual microphone source${options.fallbackReason ? ` after a direct-stream fallback (${options.fallbackReason}).` : '.'}`
           : 'The browser call is using the system microphone.',
       )
     } catch (error) {
@@ -725,6 +901,11 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     if (accentAiSelectedInputRef.current === 'accentai') {
       setAccentAiRuntime('ready')
       await applyAccentAiToLiveCall('accentai')
+      setMessage(
+        nextMode === 'clarity'
+          ? 'Accent mode set to Clarity. AccentAI calls will prefer the virtual mic path for better quality.'
+          : 'Accent mode set to Latency. AccentAI calls will prefer the direct low-latency path.',
+      )
     }
   }
 
@@ -814,6 +995,9 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     setAccentAiServiceEnabled(Boolean(refreshedInfo?.host_pipeline_running))
     setAccentAiBackend(String(refreshedInfo?.backend || 'accentai-dsp').replace(/-/g, ' '))
     setAccentAiPipeline(String(refreshedInfo?.pipeline || 'control_only_converted_mic_source'))
+    setAccentAiHostAudioReady(Boolean(refreshedInfo?.host_audio_ready))
+    setAccentAiDspSampleRate(Number(refreshedInfo?.dsp_sample_rate || 0))
+    setAccentAiPacketSamples(Number(refreshedInfo?.dsp_packet_samples || 0))
     await resolveAccentAiVirtualDevice().catch(() => null)
     return refreshedInfo
   }
@@ -910,6 +1094,9 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
       void primeAudioOutput({ reportBlocked: false }).catch(() => {})
 
       setStatus('dialing')
+      callDialStartedAtRef.current = Date.now()
+      setCallSetupDurationMs(0)
+      setActiveCallPath(accentAiSelectedInputRef.current === 'accentai' ? 'AccentAI virtual mic' : 'Browser default')
       setMessage(`Dialing ${target} through Asterisk...`)
       await simpleUser.call(target)
     } catch (error) {
@@ -927,7 +1114,9 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
     try {
       setMessage('Ending the active browser call...')
       await simpleUser.hangup()
+      callDialStartedAtRef.current = null
       setCallStartedAt(null)
+      setCallSetupDurationMs(0)
       setCallDurationSeconds(0)
       setAudioState('idle')
     } catch (error) {
@@ -953,7 +1142,10 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
         isRegisteredRef.current = false
         setIsRegistered(false)
         setAudioState('idle')
+        void stopAccentAiDirectStream({ clearFallbackReason: true }).catch(() => {})
+        callDialStartedAtRef.current = null
         setCallStartedAt(null)
+        setCallSetupDurationMs(0)
         setCallDurationSeconds(0)
         setStatus('idle')
         setMessage('Browser endpoint disconnected.')
@@ -1137,6 +1329,14 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
             <strong>{callStartedAt ? formatDuration(callDurationSeconds) : '00:00'}</strong>
           </div>
           <div className="browser-voice-panel__summary-row">
+            <span>Call path</span>
+            <strong>{activeCallPath}</strong>
+          </div>
+          <div className="browser-voice-panel__summary-row">
+            <span>Answer delay</span>
+            <strong>{callSetupDurationMs > 0 ? `${(callSetupDurationMs / 1000).toFixed(1)}s` : 'Waiting for answer'}</strong>
+          </div>
+          <div className="browser-voice-panel__summary-row">
             <span>AccentAI</span>
             <strong>{getAccentAiRuntimeLabel(accentAiRuntime)}</strong>
           </div>
@@ -1159,6 +1359,30 @@ export default function BrowserVoicePanel({ defaultDestination = '' }) {
           <div className="browser-voice-panel__summary-row">
             <span>Backend</span>
             <strong>{accentAiBackend}</strong>
+          </div>
+          <div className="browser-voice-panel__summary-row">
+            <span>Host audio</span>
+            <strong>{accentAiHostAudioReady ? 'Ready' : 'Not ready'}</strong>
+          </div>
+          <div className="browser-voice-panel__summary-row">
+            <span>DSP rate</span>
+            <strong>{accentAiDspSampleRate ? `${accentAiDspSampleRate} Hz` : 'Unknown'}</strong>
+          </div>
+          <div className="browser-voice-panel__summary-row">
+            <span>DSP packet</span>
+            <strong>{accentAiPacketSamples ? `${accentAiPacketSamples} samples` : 'Unknown'}</strong>
+          </div>
+          <div className="browser-voice-panel__summary-row">
+            <span>Direct stats</span>
+            <strong>
+              {accentAiDirectStats
+                ? `in-flight ${accentAiDirectStats.inFlightPackets}, dropped ${accentAiDirectStats.queuedPacketsDropped}, underruns ${accentAiDirectStats.playbackUnderruns ?? 0}`
+                : 'Inactive'}
+            </strong>
+          </div>
+          <div className="browser-voice-panel__summary-row">
+            <span>Fallback reason</span>
+            <strong>{accentAiDirectFallbackReason || 'None'}</strong>
           </div>
           <div className="browser-voice-panel__summary-row">
             <span>Accent language</span>
